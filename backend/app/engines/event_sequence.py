@@ -1,9 +1,17 @@
 from datetime import datetime, timezone
+import math
 
 from app.engines.multi_timeframe import (
     validate_candles,
     find_confirmed_swings,
 )
+
+MAX_EVENT_AGE_BARS = {
+    "D1": 20,
+    "H4": 30,
+    "H1": 24,
+    "M15": 32,
+}
 
 
 def _time(candle):
@@ -13,6 +21,58 @@ def _time(candle):
     if value.tzinfo is None:
         raise ValueError("Timestamps must include a timezone.")
     return value.astimezone(timezone.utc)
+
+
+def _event_age(candles, event):
+    index = event.get("index")
+    if not isinstance(index, int) or index < 0 or index >= len(candles):
+        raise ValueError("Event index is outside the candle history.")
+    return len(candles) - 1 - index
+
+
+def _is_fresh(candles, event, timeframe):
+    age = _event_age(candles, event)
+    return age <= MAX_EVENT_AGE_BARS[timeframe]
+
+
+
+def _find_invalidation(candles, sweep, direction):
+    """Find the first later candle that breaches the sweep extreme."""
+    index = _event_age(candles, sweep)
+    sweep_index = sweep["index"]
+
+    if direction == "BULLISH":
+        field = "low"
+        extreme = float(
+            sweep.get("sweep_extreme", candles[sweep_index]["low"])
+        )
+        breached = lambda candle: float(candle["low"]) < extreme
+        event_name = "BULLISH_SWEEP_LOW_BREACHED"
+    elif direction == "BEARISH":
+        field = "high"
+        extreme = float(
+            sweep.get("sweep_extreme", candles[sweep_index]["high"])
+        )
+        breached = lambda candle: float(candle["high"]) > extreme
+        event_name = "BEARISH_SWEEP_HIGH_BREACHED"
+    else:
+        raise ValueError("Direction must be BULLISH or BEARISH.")
+
+    if not math.isfinite(extreme):
+        raise ValueError("Sweep extreme must be finite.")
+
+    for i in range(sweep_index + 1, len(candles)):
+        candle = candles[i]
+        if breached(candle):
+            return {
+                "index": i,
+                "timestamp": _time(candle).isoformat(),
+                "invalidation_level": extreme,
+                "observed_extreme": float(candle[field]),
+                "event": event_name,
+            }
+
+    return None
 
 
 def _validate(data):
@@ -64,6 +124,11 @@ def _find_sweeps(candles, direction):
                 "index": i,
                 "timestamp": _time(candle).isoformat(),
                 "level": level,
+                "sweep_extreme": (
+                    float(candle["low"])
+                    if direction == "BULLISH"
+                    else float(candle["high"])
+                ),
                 "event": (
                     "SELL_SIDE_LIQUIDITY_SWEEP"
                     if direction == "BULLISH"
@@ -274,6 +339,35 @@ def _analyse_direction(data, direction):
         "htf_displacement": candidate["displacement"],
     }
 
+    htf_age = _event_age(
+        data[candidate["timeframe"]], candidate["sweep"]
+    )
+    stages["htf_sweep_age_bars"] = htf_age
+
+    if not _is_fresh(
+        data[candidate["timeframe"]],
+        candidate["sweep"],
+        candidate["timeframe"],
+    ):
+        return {
+            "direction": direction,
+            "status": "EXPIRED_HTF_LIQUIDITY_SWEEP",
+            "stages": stages,
+        }
+
+    htf_invalidation = _find_invalidation(
+        data[candidate["timeframe"]],
+        candidate["sweep"],
+        direction,
+    )
+    if htf_invalidation:
+        stages["htf_invalidation"] = htf_invalidation
+        return {
+            "direction": direction,
+            "status": "INVALIDATED_HTF_LIQUIDITY_SWEEP",
+            "stages": stages,
+        }
+
     if not candidate["displacement"]:
         return {
             "direction": direction,
@@ -285,20 +379,41 @@ def _analyse_direction(data, direction):
         candidate["displacement"]["timestamp"]
     )
 
-    h1_sweeps = [
+    detected_h1_sweeps = [
         event for event in _find_sweeps(data["H1"], direction)
         if datetime.fromisoformat(event["timestamp"]) > displacement_time
     ]
+    h1_sweeps = [
+        event for event in detected_h1_sweeps
+        if _is_fresh(data["H1"], event, "H1")
+    ]
 
     if not h1_sweeps:
+        status = (
+            "EXPIRED_H1_LIQUIDITY_SWEEP"
+            if detected_h1_sweeps
+            else "WAITING_FOR_H1_LIQUIDITY_SWEEP"
+        )
         return {
             "direction": direction,
-            "status": "WAITING_FOR_H1_LIQUIDITY_SWEEP",
+            "status": status,
             "stages": stages,
         }
 
     h1_sweep = h1_sweeps[0]
+    stages["h1_sweep_age_bars"] = _event_age(data["H1"], h1_sweep)
     stages["h1_sweep"] = h1_sweep
+
+    h1_invalidation = _find_invalidation(
+        data["H1"], h1_sweep, direction
+    )
+    if h1_invalidation:
+        stages["h1_invalidation"] = h1_invalidation
+        return {
+            "direction": direction,
+            "status": "INVALIDATED_H1_LIQUIDITY_SWEEP",
+            "stages": stages,
+        }
 
     m15 = data["M15"]
     shift = _find_structure_shift(
@@ -314,6 +429,15 @@ def _analyse_direction(data, direction):
             "stages": stages,
         }
 
+    shift_age = _event_age(m15, shift)
+    stages["m15_structure_shift_age_bars"] = shift_age
+    if not _is_fresh(m15, shift, "M15"):
+        return {
+            "direction": direction,
+            "status": "EXPIRED_M15_STRUCTURE_SHIFT",
+            "stages": stages,
+        }
+
     stages["m15_structure_shift_proxy"] = shift
 
     fvg = _find_fvg(m15, shift["index"], direction)
@@ -322,6 +446,15 @@ def _analyse_direction(data, direction):
         return {
             "direction": direction,
             "status": "WAITING_FOR_M15_POI",
+            "stages": stages,
+        }
+
+    fvg_age = _event_age(m15, fvg)
+    stages["m15_fvg_age_bars"] = fvg_age
+    if not _is_fresh(m15, fvg, "M15"):
+        return {
+            "direction": direction,
+            "status": "EXPIRED_M15_POI",
             "stages": stages,
         }
 

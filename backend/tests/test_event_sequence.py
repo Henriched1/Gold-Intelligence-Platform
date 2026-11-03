@@ -10,6 +10,9 @@ from app.engines.event_sequence import (
     _find_structure_shift,
     _find_displacement,
     _analyse_direction,
+    _event_age,
+    _is_fresh,
+    _find_invalidation,
 )
 from app.engines.multi_timeframe import find_confirmed_swings
 
@@ -59,6 +62,145 @@ def candle(index, high, low):
 
 
 class EventSequenceTests(unittest.TestCase):
+
+    def test_event_age_is_measured_in_remaining_bars(self):
+        candles = make_candles()
+        self.assertEqual(_event_age(candles, {"index": 10}), 19)
+
+    def test_event_freshness_accepts_boundary(self):
+        candles = make_candles()
+        self.assertTrue(
+            _is_fresh(candles, {"index": 10}, "H1")
+        )
+
+    def test_event_freshness_rejects_old_event(self):
+        candles = make_candles()
+        self.assertFalse(
+            _is_fresh(candles, {"index": 0}, "H1")
+        )
+
+    def test_invalid_event_index_is_rejected(self):
+        with self.assertRaises(ValueError):
+            _event_age(make_candles(), {"index": 100})
+
+    def test_bullish_sweep_invalidates_on_later_low_breach(self):
+        candles = make_candles()
+        sweep = {"index": 10, "sweep_extreme": 2390.0}
+        candles[11]["low"] = 2389.0
+
+        result = _find_invalidation(candles, sweep, "BULLISH")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["index"], 11)
+        self.assertEqual(result["invalidation_level"], 2390.0)
+        self.assertEqual(result["event"], "BULLISH_SWEEP_LOW_BREACHED")
+
+    def test_bearish_sweep_invalidates_on_later_high_breach(self):
+        candles = make_candles()
+        sweep = {"index": 10, "sweep_extreme": 2410.0}
+        candles[12]["high"] = 2411.0
+
+        result = _find_invalidation(candles, sweep, "BEARISH")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["index"], 12)
+        self.assertEqual(result["invalidation_level"], 2410.0)
+        self.assertEqual(result["event"], "BEARISH_SWEEP_HIGH_BREACHED")
+
+    def test_candles_before_sweep_cannot_invalidate_setup(self):
+        candles = make_candles()
+        sweep = {"index": 10, "sweep_extreme": 2390.0}
+        candles[9]["low"] = 2380.0
+
+        result = _find_invalidation(candles, sweep, "BULLISH")
+
+        self.assertIsNone(result)
+
+
+    def test_htf_invalidation_stops_sequence_progression(self):
+        data = {
+            timeframe: make_candles()
+            for timeframe in ("D1", "H4", "H1", "M15")
+        }
+        data["D1"][11]["low"] = 2396.0
+
+        sweep = {
+            "index": 10,
+            "timestamp": data["D1"][10]["timestamp"],
+            "sweep_extreme": 2400.0,
+            "event": "SELL_SIDE_LIQUIDITY_SWEEP",
+        }
+
+        def fake_sweeps(candles, direction):
+            return [sweep] if candles is data["D1"] else []
+
+        with patch(
+            "app.engines.event_sequence._find_sweeps",
+            side_effect=fake_sweeps,
+        ), patch(
+            "app.engines.event_sequence._find_displacement",
+            return_value=None,
+        ), patch(
+            "app.engines.event_sequence._find_structure_shift",
+        ) as shift_mock:
+            result = _analyse_direction(data, "BULLISH")
+
+        self.assertEqual(
+            result["status"],
+            "INVALIDATED_HTF_LIQUIDITY_SWEEP",
+        )
+        self.assertIn("htf_invalidation", result["stages"])
+        shift_mock.assert_not_called()
+
+    def test_h1_invalidation_stops_before_m15_structure_shift(self):
+        data = {
+            timeframe: make_candles()
+            for timeframe in ("D1", "H4", "H1", "M15")
+        }
+        data["H1"][13]["low"] = 2389.0
+
+        htf_sweep = {
+            "index": 10,
+            "timestamp": data["D1"][10]["timestamp"],
+            "sweep_extreme": 2390.0,
+            "event": "SELL_SIDE_LIQUIDITY_SWEEP",
+        }
+        h1_sweep = {
+            "index": 12,
+            "timestamp": data["H1"][12]["timestamp"],
+            "sweep_extreme": 2390.0,
+            "event": "SELL_SIDE_LIQUIDITY_SWEEP",
+        }
+        displacement = {
+            "index": 11,
+            "timestamp": data["D1"][11]["timestamp"],
+            "event": "BULLISH_DISPLACEMENT",
+        }
+
+        def fake_sweeps(candles, direction):
+            if candles is data["D1"]:
+                return [htf_sweep]
+            if candles is data["H1"]:
+                return [h1_sweep]
+            return []
+
+        with patch(
+            "app.engines.event_sequence._find_sweeps",
+            side_effect=fake_sweeps,
+        ), patch(
+            "app.engines.event_sequence._find_displacement",
+            return_value=displacement,
+        ), patch(
+            "app.engines.event_sequence._find_structure_shift",
+        ) as shift_mock:
+            result = _analyse_direction(data, "BULLISH")
+
+        self.assertEqual(
+            result["status"],
+            "INVALIDATED_H1_LIQUIDITY_SWEEP",
+        )
+        self.assertIn("h1_invalidation", result["stages"])
+        shift_mock.assert_not_called()
 
     def test_newer_htf_sweep_supersedes_older_completed_candidate(self):
         candidates = [
