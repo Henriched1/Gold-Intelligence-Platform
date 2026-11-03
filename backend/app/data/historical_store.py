@@ -2,6 +2,7 @@
 
 import math
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,11 +14,21 @@ SUPPORTED_TIMEFRAMES = {"D1", "H4", "H1", "M15"}
 REQUIRED_FIELDS = ("timestamp", "open", "high", "low", "close")
 
 
+@contextmanager
 def _connect():
+    """Open a SQLite connection and always close it safely."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
-    return connection
+
+    try:
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def _utc_timestamp(value):

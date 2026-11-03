@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from app.main import AnalysisRequest, analyse_market
+from app.main import AnalysisRequest, analyse_market, data_quality_report
 
 
 def make_candles():
@@ -77,6 +77,57 @@ class ApiValidationTests(unittest.TestCase):
         self.assertEqual(result["analysis"], expected)
         self.assertIsNone(result["probability"])
 
+
+
+    def test_data_quality_endpoint_returns_report(self):
+        expected = {"status": "NO_DATA", "read_only": True}
+
+        with patch(
+            "app.main.generate_data_quality_report",
+            return_value=expected,
+        ) as report_mock:
+            result = data_quality_report("XAUUSD", "M15")
+
+        self.assertEqual(result, expected)
+        report_mock.assert_called_once_with(
+            instrument="XAUUSD",
+            timeframe="M15",
+        )
+
+    def test_data_quality_endpoint_uses_default_parameters(self):
+        expected = {"status": "NO_DATA"}
+
+        with patch(
+            "app.main.generate_data_quality_report",
+            return_value=expected,
+        ) as report_mock:
+            result = data_quality_report()
+
+        self.assertEqual(result, expected)
+        report_mock.assert_called_once_with(
+            instrument="XAUUSD",
+            timeframe="M15",
+        )
+
+    def test_data_quality_invalid_instrument_returns_422(self):
+        with patch(
+            "app.main.generate_data_quality_report",
+            side_effect=ValueError("unsupported instrument"),
+        ):
+            with self.assertRaises(HTTPException) as context:
+                data_quality_report("EURUSD", "M15")
+
+        self.assertEqual(context.exception.status_code, 422)
+
+    def test_data_quality_invalid_timeframe_returns_422(self):
+        with patch(
+            "app.main.generate_data_quality_report",
+            side_effect=ValueError("unsupported timeframe"),
+        ):
+            with self.assertRaises(HTTPException) as context:
+                data_quality_report("XAUUSD", "M5")
+
+        self.assertEqual(context.exception.status_code, 422)
 
 if __name__ == "__main__":
     unittest.main()

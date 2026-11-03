@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from app.data.historical_store import initialise_historical_store
+from app.data.quality_report import generate_data_quality_report
 
 from app.core.database import (
     initialise_database,
@@ -206,3 +207,16 @@ def forecast_history(limit: int = 50):
         )
 
     return {"forecasts": get_forecasts(limit)}
+
+@app.get("/v1/data-quality")
+def data_quality_report(
+    instrument: str = "XAUUSD",
+    timeframe: str = "M15",
+):
+    try:
+        return generate_data_quality_report(
+            instrument=instrument,
+            timeframe=timeframe,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
