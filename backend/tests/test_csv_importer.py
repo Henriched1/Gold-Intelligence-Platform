@@ -114,9 +114,22 @@ class CsvImporterTests(unittest.TestCase):
             "inserted": 2, "duplicates": 0, "total_received": 2
         }
         self.run_import()
-        self.assertEqual(
-            ingest.call_args.kwargs["candles"][0]["volume"], 0.0
-        )
+        imported = ingest.call_args.kwargs["candles"][0]
+        self.assertEqual(imported["volume"], 0.0)
+        self.assertFalse(imported["volume_available"])
+
+    @patch("app.data.csv_importer.ingest_candles")
+    def test_explicit_zero_volume_is_available(self, ingest):
+        rows = self.rows()
+        rows[0]["volume"] = "0"
+        self.write(rows)
+        ingest.return_value = {
+            "inserted": 2, "duplicates": 0, "total_received": 2
+        }
+        self.run_import()
+        imported = ingest.call_args.kwargs["candles"][0]
+        self.assertEqual(imported["volume"], 0.0)
+        self.assertTrue(imported["volume_available"])
 
     @patch("app.data.csv_importer.ingest_candles")
     def test_storage_conflict_rejected(self, ingest):

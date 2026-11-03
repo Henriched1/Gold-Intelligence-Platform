@@ -51,6 +51,10 @@ def _parse_row(row):
         "low": _number(row.get("low"), "low"),
         "close": _number(row.get("close"), "close"),
         "volume": _number(row.get("volume"), "volume", 0.0),
+        "volume_available": (
+            row.get("volume") is not None
+            and row.get("volume").strip() != ""
+        ),
     }
 
     if candle["volume"] < 0:

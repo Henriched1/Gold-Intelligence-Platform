@@ -61,6 +61,13 @@ def _normalise_candle(candle):
 
         values[field] = number
 
+    volume_available = candle.get(
+        "volume_available",
+        "volume" in candle and candle.get("volume") is not None,
+    )
+    if not isinstance(volume_available, bool):
+        raise ValueError("volume_available must be true or false")
+
     try:
         volume = float(candle.get("volume", 0))
     except (TypeError, ValueError) as error:
@@ -86,6 +93,7 @@ def _normalise_candle(candle):
         values["low"],
         values["close"],
         volume,
+        int(volume_available),
     )
 
 
@@ -102,6 +110,7 @@ def initialise_historical_store():
                 low REAL NOT NULL,
                 close REAL NOT NULL,
                 volume REAL NOT NULL,
+                volume_available INTEGER,
                 source TEXT NOT NULL,
                 source_version TEXT NOT NULL,
                 session_convention TEXT NOT NULL,
@@ -109,6 +118,18 @@ def initialise_historical_store():
                 UNIQUE(instrument, timeframe, timestamp, source)
             )
         """)
+
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(historical_candles)"
+            ).fetchall()
+        }
+        if "volume_available" not in columns:
+            connection.execute(
+                "ALTER TABLE historical_candles "
+                "ADD COLUMN volume_available INTEGER"
+            )
 
         connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_historical_lookup
@@ -198,7 +219,7 @@ def ingest_candles(
                     for key in ("open", "high", "low", "close", "volume")
                 )
 
-                if existing_values != row[1:]:
+                if existing_values != row[1:6]:
                     raise ValueError(
                         f"conflicting candle already stored for "
                         f"{row[0]} from {source}"
@@ -217,12 +238,13 @@ def ingest_candles(
                     low,
                     close,
                     volume,
+                    volume_available,
                     source,
                     source_version,
                     session_convention,
                     ingested_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 instrument,
                 timeframe,
