@@ -5,6 +5,8 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from app.data.historical_store import initialise_historical_store
+
 from app.core.database import (
     initialise_database,
     save_forecast,
@@ -21,6 +23,7 @@ from app.engines.event_sequence import analyse_event_sequence
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     initialise_database()
+    initialise_historical_store()
     yield
 
 
