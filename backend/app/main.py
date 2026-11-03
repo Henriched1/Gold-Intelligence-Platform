@@ -11,7 +11,10 @@ from app.core.database import (
     get_forecasts,
 )
 from app.engines.structure import analyse_structure
-from app.engines.multi_timeframe import analyse_multi_timeframe
+from app.engines.multi_timeframe import (
+    analyse_multi_timeframe,
+    validate_candles,
+)
 from app.engines.event_sequence import analyse_event_sequence
 
 
@@ -108,6 +111,12 @@ def analyse_market(request: AnalysisRequest):
     check_instrument(request.instrument)
 
     candles = [c.model_dump() for c in request.candles]
+
+    try:
+        validate_candles(candles)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+
     analysis = analyse_structure(candles)
 
     record = save_analysis(
