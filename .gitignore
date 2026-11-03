@@ -6,3 +6,4 @@ data/*.db
 .pytest_cache/
 node_modules/
 dist/
+config/provider_approvals.json

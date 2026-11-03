@@ -1,0 +1,19 @@
+{
+  "provider_id": "twelve_data",
+  "status": "NOT_APPROVED",
+  "approval_reference": "",
+  "approved_at": "",
+  "expires_at": "",
+  "permitted_instruments": [],
+  "permitted_timeframes": [],
+  "exchange_timezone": "",
+  "retention_days": 0,
+  "commercial_use": false,
+  "non_us_market_data_approval": false,
+  "historical_storage": false,
+  "derived_data_storage": false,
+  "derived_data_display": false,
+  "raw_data_redistribution": false,
+  "attribution_required": true,
+  "attribution_text": ""
+}
