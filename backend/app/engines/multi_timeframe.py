@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from math import isfinite
 from statistics import median
 
@@ -23,15 +23,39 @@ def validate_candles(candles):
         except (TypeError, ValueError):
             raise ValueError(f"Invalid timestamp at candle {index}")
 
+        if stamp.tzinfo is None or stamp.utcoffset() is None:
+            raise ValueError(
+                f"Timestamp at candle {index} must include a timezone"
+            )
+
+        stamp = stamp.astimezone(timezone.utc)
+
         if previous_time is not None and stamp <= previous_time:
             raise ValueError("Candles must be chronological and unique")
 
         previous_time = stamp
 
-        values = [
-            float(candle[field])
-            for field in ("open", "high", "low", "close")
-        ]
+        try:
+            values = [
+                float(candle[field])
+                for field in ("open", "high", "low", "close")
+            ]
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(
+                f"Candle prices must be numeric at candle {index}"
+            )
+
+        if "volume" in candle:
+            try:
+                volume = float(candle["volume"])
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError(
+                    f"Volume must be numeric at candle {index}"
+                )
+            if not isfinite(volume) or volume < 0:
+                raise ValueError(
+                    f"Volume must be finite and non-negative at candle {index}"
+                )
 
         if not all(isfinite(value) for value in values):
             raise ValueError("Candle prices must be finite numbers")
@@ -66,13 +90,16 @@ def find_confirmed_swings(candles, left=2, right=2):
 
 
 def analyse_timeframe(timeframe, candles):
+    if timeframe not in TIMEFRAMES:
+        raise ValueError(f"Unsupported timeframe: {timeframe}")
+
     validate_candles(candles)
 
     highs, lows = find_confirmed_swings(candles)
     current = candles[-1]
 
     events = []
-    direction = "NEUTRAL"
+    directional_evidence = []
 
     last_high = highs[-1] if highs else None
     last_low = lows[-1] if lows else None
@@ -89,14 +116,14 @@ def analyse_timeframe(timeframe, candles):
                 "event": "BUY_SIDE_LIQUIDITY_SWEEP",
                 "level": level
             })
-            direction = "BEARISH"
+            directional_evidence.append("BEARISH")
 
         elif close > level:
             events.append({
                 "event": "BULLISH_STRUCTURE_BREAK",
                 "level": level
             })
-            direction = "BULLISH"
+            directional_evidence.append("BULLISH")
 
     if last_low:
         level = last_low["price"]
@@ -106,15 +133,23 @@ def analyse_timeframe(timeframe, candles):
                 "event": "SELL_SIDE_LIQUIDITY_SWEEP",
                 "level": level
             })
-            if direction == "NEUTRAL":
-                direction = "BULLISH"
+            directional_evidence.append("BULLISH")
 
         elif close < level:
             events.append({
                 "event": "BEARISH_STRUCTURE_BREAK",
                 "level": level
             })
-            direction = "BEARISH"
+            directional_evidence.append("BEARISH")
+
+    unique_directions = set(directional_evidence)
+
+    if len(unique_directions) > 1:
+        direction = "CONFLICTING"
+    elif unique_directions:
+        direction = next(iter(unique_directions))
+    else:
+        direction = "NEUTRAL"
 
     previous_bodies = [
         abs(float(c["close"]) - float(c["open"]))
@@ -187,12 +222,14 @@ def analyse_multi_timeframe(data):
     bullish = sum(v == "BULLISH" for v in directions.values())
     bearish = sum(v == "BEARISH" for v in directions.values())
 
-    if bullish == 4:
+    conflicting = sum(v == "CONFLICTING" for v in directions.values())
+
+    if conflicting or (bullish and bearish):
+        alignment = "TIMEFRAME_CONFLICT"
+    elif bullish == 4:
         alignment = "FULL_BULLISH_ALIGNMENT"
     elif bearish == 4:
         alignment = "FULL_BEARISH_ALIGNMENT"
-    elif bullish and bearish:
-        alignment = "TIMEFRAME_CONFLICT"
     else:
         alignment = "PARTIAL_OR_NEUTRAL"
 
@@ -204,7 +241,8 @@ def analyse_multi_timeframe(data):
         "direction_counts": {
             "bullish": bullish,
             "bearish": bearish,
-            "neutral": 4 - bullish - bearish
+            "neutral": 4 - bullish - bearish - conflicting,
+            "conflicting": conflicting
         },
         "probability": None,
         "trade_signal": None,

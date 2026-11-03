@@ -76,5 +76,52 @@ class MultiTimeframeTests(unittest.TestCase):
             analyse_multi_timeframe({"D1": sample_candles()})
 
 
+    def test_rejects_timezone_naive_timestamps(self):
+        candles = sample_candles()
+        candles[0]["timestamp"] = "2026-01-01T00:00:00"
+        with self.assertRaises(ValueError):
+            validate_candles(candles)
+
+    def test_rejects_non_finite_volume(self):
+        candles = sample_candles()
+        candles[-1]["volume"] = float("inf")
+        with self.assertRaises(ValueError):
+            validate_candles(candles)
+
+    def test_rejects_negative_volume(self):
+        candles = sample_candles()
+        candles[-1]["volume"] = -1
+        with self.assertRaises(ValueError):
+            validate_candles(candles)
+
+    def test_rejects_unsupported_timeframe(self):
+        with self.assertRaises(ValueError):
+            analyse_timeframe("M5", sample_candles())
+
+    def test_conflicting_sweeps_are_not_forced_direction(self):
+        from unittest.mock import patch
+
+        candles = sample_candles()
+        candles[-1].update({
+            "open": 99,
+            "high": 106,
+            "low": 94,
+            "close": 100
+        })
+
+        swings = (
+            [{"index": 10, "price": 105}],
+            [{"index": 11, "price": 95}]
+        )
+
+        with patch(
+            "app.engines.multi_timeframe.find_confirmed_swings",
+            return_value=swings
+        ):
+            result = analyse_timeframe("H1", candles)
+
+        self.assertEqual(result["direction"], "CONFLICTING")
+
+
 if __name__ == "__main__":
     unittest.main()
