@@ -122,6 +122,7 @@ def initialise_historical_store():
                 close REAL NOT NULL,
                 volume REAL NOT NULL,
                 volume_available INTEGER,
+                price_component TEXT NOT NULL DEFAULT 'UNKNOWN',
                 source TEXT NOT NULL,
                 source_version TEXT NOT NULL,
                 session_convention TEXT NOT NULL,
@@ -140,6 +141,12 @@ def initialise_historical_store():
             connection.execute(
                 "ALTER TABLE historical_candles "
                 "ADD COLUMN volume_available INTEGER"
+            )
+
+        if "price_component" not in columns:
+            connection.execute(
+                "ALTER TABLE historical_candles "
+                "ADD COLUMN price_component TEXT NOT NULL DEFAULT 'UNKNOWN'"
             )
 
         connection.execute("""
@@ -173,6 +180,7 @@ def ingest_candles(
     source,
     source_version="unspecified",
     session_convention="unspecified",
+    price_component="UNKNOWN",
 ):
     instrument = str(instrument).upper()
 
@@ -190,6 +198,9 @@ def ingest_candles(
 
     if not isinstance(session_convention, str) or not session_convention.strip():
         raise ValueError("session_convention is required")
+
+    if price_component not in {"BID", "ASK", "MID", "UNKNOWN"}:
+        raise ValueError("invalid price_component")
 
     if not isinstance(candles, list) or not candles:
         raise ValueError("candles must be a non-empty list")
@@ -211,7 +222,8 @@ def ingest_candles(
         # Check every existing record before inserting any new record.
         for row in rows:
             existing = connection.execute("""
-                SELECT open, high, low, close, volume
+                SELECT open, high, low, close, volume,
+                       source_version, session_convention, price_component
                 FROM historical_candles
                 WHERE instrument=?
                   AND timeframe=?
@@ -236,6 +248,23 @@ def ingest_candles(
                         f"{row[0]} from {source}"
                     )
 
+                existing_metadata = (
+                    existing["source_version"],
+                    existing["session_convention"],
+                    existing["price_component"],
+                )
+                incoming_metadata = (
+                    source_version,
+                    session_convention,
+                    price_component,
+                )
+
+                if existing_metadata != incoming_metadata:
+                    raise ValueError(
+                        f"conflicting provenance already stored for "
+                        f"{row[0]} from {source}"
+                    )
+
                 duplicates += 1
 
         for row in rows:
@@ -250,16 +279,18 @@ def ingest_candles(
                     close,
                     volume,
                     volume_available,
+                    price_component,
                     source,
                     source_version,
                     session_convention,
                     ingested_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 instrument,
                 timeframe,
                 *row,
+                price_component,
                 source,
                 source_version,
                 session_convention,
