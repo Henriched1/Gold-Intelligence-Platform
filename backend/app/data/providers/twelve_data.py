@@ -160,8 +160,8 @@ class TwelveDataProvider:
             request_zone
         )
 
-        if start >= end:
-            raise ValueError("request start must be before end")
+        if start > end:
+            raise ValueError("request start must not be after end")
 
         return {
             "symbol": self.metadata.instrument_mapping[request.instrument],
@@ -189,8 +189,8 @@ class TwelveDataProvider:
         start_utc = parse_request_datetime(request.start)
         end_utc = parse_request_datetime(request.end)
 
-        if start_utc >= end_utc:
-            raise ValueError("request start must be before end")
+        if start_utc > end_utc:
+            raise ValueError("request start must not be after end")
 
         # Licensing approval is checked before any outbound request.
         record = self._approved_record(request)

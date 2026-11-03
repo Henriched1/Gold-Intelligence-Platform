@@ -169,6 +169,46 @@ class TwelveDataProviderTests(unittest.TestCase):
         )
         self.assertEqual(params["outputsize"], ["5000"])
 
+    def test_single_candle_request_with_equal_boundaries_is_allowed(self):
+        self.write_approval(approved_record())
+        provider = self.provider()
+        request = ProviderRequest(
+            instrument="XAUUSD",
+            timeframe="M15",
+            start="2026-11-02T00:00:00Z",
+            end="2026-11-02T00:00:00Z",
+        )
+        payload = {"values": [{
+            "datetime": "2026-11-02 00:00:00",
+            "open": "4000",
+            "high": "4001",
+            "low": "3999",
+            "close": "4000.5",
+        }]}
+        with patch(
+            "app.data.providers.twelve_data.urlopen",
+            return_value=FakeResponse(payload),
+        ) as mocked_urlopen:
+            candles = provider.fetch_candles(request)
+        self.assertEqual(len(candles), 1)
+        mocked_urlopen.assert_called_once()
+
+    def test_reversed_request_range_is_rejected_before_network(self):
+        self.write_approval(approved_record())
+        provider = self.provider()
+        request = ProviderRequest(
+            instrument="XAUUSD",
+            timeframe="M15",
+            start="2026-11-03T00:00:00Z",
+            end="2026-11-02T00:00:00Z",
+        )
+        with patch(
+            "app.data.providers.twelve_data.urlopen"
+        ) as mocked_urlopen:
+            with self.assertRaises(ValueError):
+                provider.fetch_candles(request)
+        mocked_urlopen.assert_not_called()
+
     def test_out_of_range_candle_is_rejected(self):
         from app.data.provider_contract import ProviderResponseError
 
