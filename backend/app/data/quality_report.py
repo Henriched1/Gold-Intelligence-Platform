@@ -1,6 +1,7 @@
 """Read-only historical dataset quality and coverage analysis."""
 
 import math
+from datetime import datetime, timezone
 from collections import defaultdict
 from statistics import median
 
@@ -16,6 +17,17 @@ MAX_REPORTED_SOURCE_DIFFERENCES = 100
 DEFAULT_SOURCE_TOLERANCE = 0.0005
 
 OHLC_FIELDS = ("open", "high", "low", "close")
+
+
+def _utc_datetime(value):
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("as_of_utc must be a valid ISO-8601 timestamp") from error
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("as_of_utc must include a timezone")
+    return value.astimezone(timezone.utc)
 
 
 def _valid_ohlc(row):
@@ -229,6 +241,8 @@ def generate_data_quality_report(
     timeframe="M15",
     anomaly_threshold=DEFAULT_ANOMALY_THRESHOLD,
     source_tolerance=DEFAULT_SOURCE_TOLERANCE,
+    *,
+    as_of_utc=None,
 ):
     """Generate a read-only quality report for stored historical candles."""
 
@@ -255,6 +269,25 @@ def generate_data_quality_report(
         instrument,
         timeframe,
         limit=100000,
+    )
+
+    report_time = (
+        _utc_datetime(as_of_utc)
+        if as_of_utc is not None
+        else datetime.now(timezone.utc)
+    )
+    candle_times = [
+        _utc_datetime(row["timestamp"])
+        for row in rows
+    ]
+    newest_candle_time = max(candle_times) if candle_times else None
+    future_observation_rows = sum(
+        candle_time > report_time for candle_time in candle_times
+    )
+    newest_candle_age_seconds = (
+        (report_time - newest_candle_time).total_seconds()
+        if newest_candle_time is not None
+        else None
     )
 
     volume_available = sum(
@@ -315,6 +348,31 @@ def generate_data_quality_report(
         "instrument": instrument,
         "timeframe": timeframe,
         "read_only": True,
+        "report_generated_at_utc": report_time.isoformat(),
+        "freshness_assessment": {
+            "classification": "AGE_ONLY_NOT_CLASSIFIED",
+            "age_basis": "CANDLE_OPEN_TIMESTAMP",
+            "newest_candle_timestamp_utc": (
+                newest_candle_time.isoformat()
+                if newest_candle_time is not None else None
+            ),
+            "newest_candle_age_seconds": newest_candle_age_seconds,
+            "future_observation_rows": future_observation_rows,
+            "session_calendar_verified": False,
+            "reason": (
+                "Candle age alone cannot establish freshness without an "
+                "approved session calendar and candle-close convention."
+            ),
+        },
+        "quality_controls": {
+            "market_data_verified": False,
+            "signal_eligible": False,
+            "automatic_stale_rejection": False,
+            "reason": (
+                "Independent source, licensing, session-calendar and "
+                "freshness verification are not established."
+            ),
+        },
         "coverage": {
             **coverage,
             "analysed_candle_count": len(rows),

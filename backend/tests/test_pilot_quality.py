@@ -92,6 +92,57 @@ class PilotQualityTests(unittest.TestCase):
         self.assertEqual(report["candle_summary"]["unique_observed_timestamps"], 1)
         self.assertEqual(report["candle_summary"]["duplicate_timestamp_rows"], 1)
 
+    def test_report_exposes_candle_age_without_claiming_freshness(self):
+        plan = build_acquisition_plan(
+            "XAUUSD", "M15",
+            "2026-11-02T00:00:00Z",
+            "2026-11-02T00:00:00Z",
+            max_rows=1,
+        )
+        register_plan(self.db, plan)
+        candle = self.make_candle("2026-11-02T00:00:00+00:00")
+        commit_chunk(self.db, plan, 1, [candle], self.metadata)
+
+        report = generate_pilot_quality_report(
+            self.db,
+            plan["plan_id"],
+            as_of_utc="2026-11-02T01:00:00Z",
+        )
+
+        self.assertEqual(
+            report["candle_summary"]["newest_candle_age_seconds"], 3600
+        )
+        self.assertEqual(
+            report["freshness_assessment"]["classification"],
+            "AGE_ONLY_NOT_CLASSIFIED",
+        )
+        self.assertFalse(report["quality_controls"]["signal_eligible"])
+
+    def test_report_flags_future_observation(self):
+        plan = build_acquisition_plan(
+            "XAUUSD", "M15",
+            "2026-11-02T00:00:00Z",
+            "2026-11-02T00:00:00Z",
+            max_rows=1,
+        )
+        register_plan(self.db, plan)
+        candle = self.make_candle("2026-11-02T00:00:00+00:00")
+        commit_chunk(self.db, plan, 1, [candle], self.metadata)
+
+        report = generate_pilot_quality_report(
+            self.db,
+            plan["plan_id"],
+            as_of_utc="2026-11-01T23:00:00Z",
+        )
+
+        self.assertEqual(
+            report["candle_summary"]["future_observation_rows"], 1
+        )
+        self.assertEqual(
+            report["freshness_assessment"]["classification"],
+            "AGE_ONLY_NOT_CLASSIFIED",
+        )
+
     def test_daily_report_uses_expanded_exchange_day_boundaries(self):
         plan = build_acquisition_plan(
             "XAUUSD", "D1",

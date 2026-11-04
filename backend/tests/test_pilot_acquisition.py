@@ -10,7 +10,7 @@ from pathlib import Path
 from app.data.acquisition_plan import build_acquisition_plan
 from app.data.acquisition_runner import run_acquisition_plan
 from app.data.pilot_store import commit_chunk, get_chunk_statuses, register_plan
-from app.data.provider_contract import ProviderMetadata, ProviderNotApproved
+from app.data.provider_contract import ProviderMetadata, ProviderNotApproved, ProviderResponseError
 from app.data.historical_store import DB_PATH as PRODUCTION_DB_PATH
 
 
@@ -73,6 +73,8 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(result["status"], "DRY_RUN")
         self.assertEqual(result["network_requests_made"], 0)
         self.assertFalse(result["market_data_written"])
+        self.assertFalse(result["data_acquisition_enabled"])
+        self.assertFalse(result["trade_execution_enabled"])
         self.assertEqual(provider.calls, 0)
         with closing(sqlite3.connect(self.db)) as con:
             self.assertEqual(con.execute(
@@ -98,6 +100,9 @@ class PilotTests(unittest.TestCase):
             provider, self.plan, self.db,
             approval_path=self.approval, execute=True, resume=True)
         self.assertEqual(first["candles_inserted"], 1)
+        self.assertTrue(first["execution_enabled"])
+        self.assertTrue(first["data_acquisition_enabled"])
+        self.assertFalse(first["trade_execution_enabled"])
         self.assertEqual(second["network_requests_made"], 0)
         self.assertEqual(second["skipped_completed"], 1)
         self.assertEqual(provider.calls, 1)
@@ -142,6 +147,36 @@ class PilotTests(unittest.TestCase):
         from app.data.pilot_store import initialise_pilot_database
         with self.assertRaises(ValueError):
             initialise_pilot_database(PRODUCTION_DB_PATH)
+
+
+    def test_future_dated_candle_is_rejected_without_storage(self):
+        provider = FakeProvider([{
+            "timestamp": "2099-01-01T00:00:00+00:00",
+            "open": 4000, "high": 4002, "low": 3999, "close": 4001,
+        }])
+
+        with self.assertRaisesRegex(
+            ProviderResponseError, "future-dated candle"
+        ):
+            run_acquisition_plan(
+                provider,
+                self.plan,
+                self.db,
+                approval_path=self.approval,
+                execute=True,
+            )
+
+        self.assertEqual(
+            get_chunk_statuses(self.db, self.plan["plan_id"])[0]["status"],
+            "FAILED",
+        )
+        with closing(sqlite3.connect(self.db)) as con:
+            self.assertEqual(
+                con.execute(
+                    "SELECT COUNT(*) FROM pilot_candles"
+                ).fetchone()[0],
+                0,
+            )
 
 
 if __name__ == "__main__":

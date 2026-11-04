@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from app.data.provider_approval import load_approval, validate_approval
 from app.data.provider_contract import ProviderRequest
-from app.data.provider_normalizer import normalise_batch
+from app.data.provider_normalizer import normalise_batch, reject_future_candles
 from app.data.providers.twelve_data import parse_request_datetime
 from app.data.pilot_store import (
     commit_chunk,
@@ -109,6 +109,8 @@ def run_acquisition_plan(
             ),
             "network_requests_made": 0,
             "market_data_written": False,
+            "data_acquisition_enabled": False,
+            "trade_execution_enabled": False,
         }
 
     if not approval_path:
@@ -182,6 +184,7 @@ def run_acquisition_plan(
                 plan["timeframe"],
                 max_rows=chunk["max_rows"],
             )
+            reject_future_candles(candles)
             chunk_start = parse_request_datetime(chunk["start"])
             chunk_end = parse_request_datetime(chunk["end"])
 
@@ -234,4 +237,6 @@ def run_acquisition_plan(
         "duplicate_candles": duplicate_total,
         "market_data_written": inserted_total > 0,
         "execution_enabled": True,
+        "data_acquisition_enabled": True,
+        "trade_execution_enabled": False,
     }

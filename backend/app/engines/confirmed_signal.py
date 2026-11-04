@@ -8,6 +8,10 @@ from dataclasses import dataclass
 
 REQUIRED_CHECKS = (
     "data_fresh",
+    "market_data_verified",
+    "licensing_approved",
+    "session_calendar_verified",
+    "spread_verified",
     "higher_timeframe_context",
     "liquidity_event",
     "displacement",

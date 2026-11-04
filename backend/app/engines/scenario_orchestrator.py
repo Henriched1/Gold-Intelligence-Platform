@@ -55,6 +55,11 @@ def analyse_instrument_scenarios(instrument, candles_by_timeframe):
         evidence = {
             # These cannot be verified from an unprovenanced candle payload.
             "data_fresh": False,
+            # Unverified user candles cannot establish data eligibility.
+            "market_data_verified": False,
+            "licensing_approved": False,
+            "session_calendar_verified": False,
+            "spread_verified": False,
             "higher_timeframe_context": htf_aligned,
             "liquidity_event": bool(
                 stages.get("htf_sweep") and stages.get("h1_sweep")
@@ -118,6 +123,10 @@ def analyse_instrument_scenarios(instrument, candles_by_timeframe):
             "freshness": "UNVERIFIED",
             "live_data_available": False,
             "licensing_status": "NOT_ESTABLISHED",
+            "market_data_verified": False,
+            "session_calendar_verified": False,
+            "spread_verified": False,
+            "signal_eligible": False,
         },
         "probability": None,
         "trade_signal": None,

@@ -229,6 +229,29 @@ class QualityReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source_tolerance"):
             generate_data_quality_report(source_tolerance=1)
 
+    def test_report_calculates_age_without_claiming_freshness(self):
+        self.ingest(make_candles())
+        report = generate_data_quality_report(
+            as_of_utc="2026-01-01T01:30:00+00:00"
+        )
+
+        freshness = report["freshness_assessment"]
+        self.assertEqual(freshness["classification"], "AGE_ONLY_NOT_CLASSIFIED")
+        self.assertEqual(freshness["newest_candle_age_seconds"], 3600.0)
+        self.assertFalse(freshness["session_calendar_verified"])
+        self.assertFalse(report["quality_controls"]["signal_eligible"])
+
+    def test_future_candles_are_flagged(self):
+        self.ingest(make_candles())
+        report = generate_data_quality_report(
+            as_of_utc="2026-01-01T00:15:00Z"
+        )
+
+        freshness = report["freshness_assessment"]
+        self.assertEqual(freshness["future_observation_rows"], 1)
+        self.assertEqual(freshness["newest_candle_age_seconds"], -900.0)
+        self.assertFalse(report["quality_controls"]["signal_eligible"])
+
     def test_report_does_not_modify_stored_records(self):
         self.ingest(make_candles(25))
 

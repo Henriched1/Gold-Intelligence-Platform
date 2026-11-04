@@ -119,6 +119,14 @@ class HistoricalStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicting candle"):
             self.ingest([candle(1, close=12)])
 
+    def test_conflicting_volume_availability_rejected(self):
+        self.ingest([candle(1)])
+        changed = candle(1)
+        changed["volume_available"] = False
+
+        with self.assertRaisesRegex(ValueError, "conflicting candle"):
+            self.ingest([changed])
+
     def test_conflict_preflight_prevents_partial_insert(self):
         self.ingest([candle(2)])
 

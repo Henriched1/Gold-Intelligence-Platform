@@ -131,6 +131,28 @@ def normalise_candle(observation):
     return candle
 
 
+def reject_future_candles(candles, *, as_of_utc=None):
+    """Reject candle-open timestamps later than the trusted UTC clock."""
+    reference = as_of_utc or datetime.now(timezone.utc)
+    if (
+        not isinstance(reference, datetime)
+        or reference.tzinfo is None
+        or reference.utcoffset() is None
+    ):
+        raise ValueError("as_of_utc must be timezone-aware")
+
+    reference = reference.astimezone(timezone.utc)
+
+    for candle in candles:
+        timestamp = datetime.fromisoformat(
+            candle["timestamp"].replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+        if timestamp > reference:
+            raise ProviderResponseError(
+                "provider returned a future-dated candle"
+            )
+
+
 def normalise_batch(
     observations,
     instrument,

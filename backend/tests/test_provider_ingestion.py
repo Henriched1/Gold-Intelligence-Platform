@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -79,6 +80,26 @@ class ProviderIngestionTests(unittest.TestCase):
             historical_store, "DB_PATH", self.db
         )
         self.db_patch.start()
+        self.approval_path = Path(self.temp.name) / "test-approval.json"
+        self.approval_path.write_text(json.dumps({
+            "provider_id": "test-provider",
+            "status": "APPROVED",
+            "approval_reference": "TEST-ONLY-APPROVAL",
+            "approved_at": "2026-01-01",
+            "expires_at": "2027-01-01",
+            "permitted_instruments": ["XAUUSD"],
+            "permitted_timeframes": ["M15", "H1", "H4", "D1"],
+            "exchange_timezone": "UTC",
+            "retention_days": 365,
+            "commercial_use": True,
+            "non_us_market_data_approval": True,
+            "historical_storage": True,
+            "derived_data_storage": True,
+            "derived_data_display": True,
+            "raw_data_redistribution": False,
+            "attribution_required": True,
+            "attribution_text": "Test fixture only"
+        }), encoding="utf-8")
         historical_store.initialise_historical_store()
 
     def tearDown(self):
@@ -88,7 +109,7 @@ class ProviderIngestionTests(unittest.TestCase):
     def test_approved_provider_ingests_canonical_utc_data(self):
         provider = FakeProvider(sample_observations())
 
-        result = ingest_provider_batch(provider, sample_request())
+        result = ingest_provider_batch(provider, sample_request(), approval_path=self.approval_path)
 
         self.assertEqual(result["status"], "INGESTED")
         self.assertEqual(result["inserted"], 2)
@@ -112,7 +133,7 @@ class ProviderIngestionTests(unittest.TestCase):
         )
 
         with self.assertRaises(ProviderNotApproved):
-            ingest_provider_batch(provider, sample_request())
+            ingest_provider_batch(provider, sample_request(), approval_path=self.approval_path)
 
         self.assertEqual(provider.calls, 0)
         self.assertEqual(
@@ -128,7 +149,7 @@ class ProviderIngestionTests(unittest.TestCase):
         provider = FakeProvider(bad)
 
         with self.assertRaises(ProviderResponseError):
-            ingest_provider_batch(provider, sample_request())
+            ingest_provider_batch(provider, sample_request(), approval_path=self.approval_path)
 
         self.assertEqual(
             historical_store.get_historical_candles(
@@ -143,7 +164,7 @@ class ProviderIngestionTests(unittest.TestCase):
         provider = FakeProvider(bad)
 
         with self.assertRaises(ProviderResponseError):
-            ingest_provider_batch(provider, sample_request())
+            ingest_provider_batch(provider, sample_request(), approval_path=self.approval_path)
 
         self.assertEqual(
             historical_store.get_historical_candles(
@@ -158,7 +179,7 @@ class ProviderIngestionTests(unittest.TestCase):
         provider = FakeProvider(bad)
 
         with self.assertRaises(ProviderResponseError):
-            ingest_provider_batch(provider, sample_request())
+            ingest_provider_batch(provider, sample_request(), approval_path=self.approval_path)
 
     def test_rate_limit_error_is_preserved(self):
         provider = FakeProvider(
@@ -166,13 +187,13 @@ class ProviderIngestionTests(unittest.TestCase):
         )
 
         with self.assertRaises(ProviderRateLimited):
-            ingest_provider_batch(provider, sample_request())
+            ingest_provider_batch(provider, sample_request(), approval_path=self.approval_path)
 
     def test_replay_is_idempotent(self):
         provider = FakeProvider(sample_observations())
 
-        first = ingest_provider_batch(provider, sample_request())
-        second = ingest_provider_batch(provider, sample_request())
+        first = ingest_provider_batch(provider, sample_request(), approval_path=self.approval_path)
+        second = ingest_provider_batch(provider, sample_request(), approval_path=self.approval_path)
 
         self.assertEqual(first["inserted"], 2)
         self.assertEqual(second["inserted"], 0)
@@ -194,12 +215,12 @@ class ProviderIngestionTests(unittest.TestCase):
             sample_observations(), version="v2"
         )
 
-        ingest_provider_batch(first, sample_request())
+        ingest_provider_batch(first, sample_request(), approval_path=self.approval_path)
 
         with self.assertRaisesRegex(
             ValueError, "conflicting provenance"
         ):
-            ingest_provider_batch(second, sample_request())
+            ingest_provider_batch(second, sample_request(), approval_path=self.approval_path)
 
         rows = historical_store.get_historical_candles(
             "XAUUSD", "M15"
@@ -219,7 +240,7 @@ class ProviderIngestionTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "before end"):
-            ingest_provider_batch(provider, invalid)
+            ingest_provider_batch(provider, invalid, approval_path=self.approval_path)
 
         self.assertEqual(provider.calls, 0)
 
@@ -232,11 +253,70 @@ class ProviderIngestionTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ProviderResponseError, "volume is marked available"
         ):
-            ingest_provider_batch(provider, sample_request())
+            ingest_provider_batch(provider, sample_request(), approval_path=self.approval_path)
 
         self.assertEqual(
             historical_store.get_historical_candles("XAUUSD", "M15"),
             [],
+        )
+
+
+    def test_missing_written_approval_blocks_provider_fetch(self):
+        provider = FakeProvider(sample_observations())
+        missing_path = Path(self.temp.name) / "missing-approval.json"
+
+        with self.assertRaises(ProviderNotApproved):
+            ingest_provider_batch(
+                provider,
+                sample_request(),
+                approval_path=missing_path,
+            )
+
+        self.assertEqual(provider.calls, 0)
+        self.assertEqual(
+            historical_store.get_historical_candles("XAUUSD", "M15"),
+            [],
+        )
+
+    def test_candle_outside_requested_range_is_rejected(self):
+        observations = sample_observations()
+        observations[1]["timestamp"] = "2026-01-01T03:15:00+01:00"
+        provider = FakeProvider(observations)
+
+        with self.assertRaisesRegex(
+            ProviderResponseError,
+            "outside the requested range",
+        ):
+            ingest_provider_batch(
+                provider,
+                sample_request(),
+                approval_path=self.approval_path,
+            )
+
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(
+            historical_store.get_historical_candles("XAUUSD", "M15"),
+            [],
+        )
+
+
+    def test_future_dated_candle_is_rejected(self):
+        observations = sample_observations()
+        observations[0]["timestamp"] = "2099-01-01T00:00:00Z"
+        observations[1]["timestamp"] = "2099-01-01T00:15:00Z"
+        provider = FakeProvider(observations)
+
+        with self.assertRaisesRegex(
+            ProviderResponseError, "future-dated candle"
+        ):
+            ingest_provider_batch(
+                provider,
+                sample_request(),
+                approval_path=self.approval_path,
+            )
+
+        self.assertEqual(
+            historical_store.get_historical_candles("XAUUSD", "M15"), []
         )
 
 

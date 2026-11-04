@@ -224,7 +224,7 @@ def ingest_candles(
         # Check every existing record before inserting any new record.
         for row in rows:
             existing = connection.execute("""
-                SELECT open, high, low, close, volume,
+                SELECT open, high, low, close, volume, volume_available,
                        source_version, session_convention, price_component
                 FROM historical_candles
                 WHERE instrument=?
@@ -244,7 +244,10 @@ def ingest_candles(
                     for key in ("open", "high", "low", "close", "volume")
                 )
 
-                if existing_values != row[1:6]:
+                if (
+                existing_values != row[1:6]
+                or existing["volume_available"] != row[6]
+            ):
                     raise ValueError(
                         f"conflicting candle already stored for "
                         f"{row[0]} from {source}"

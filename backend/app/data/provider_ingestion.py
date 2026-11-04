@@ -1,8 +1,9 @@
 """Controlled provider-to-store ingestion pipeline."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.data import historical_store
+from app.data.provider_approval import load_approval, validate_approval
 from app.data.provider_contract import (
     HistoricalDataProvider,
     ProviderRequest,
@@ -12,7 +13,7 @@ from app.data.provider_contract import (
     SUPPORTED_INSTRUMENTS,
     SUPPORTED_TIMEFRAMES,
 )
-from app.data.provider_normalizer import normalise_batch
+from app.data.provider_normalizer import normalise_batch, reject_future_candles
 
 
 def _validate_request(request):
@@ -47,7 +48,7 @@ def _validate_request(request):
         raise ValueError("request start must be before end")
 
 
-def ingest_provider_batch(provider, request):
+def ingest_provider_batch(provider, request, approval_path="config/provider_approvals.json"):
     """Fetch, validate and append one provider batch.
 
     This function does not retry automatically. The caller can decide
@@ -61,6 +62,13 @@ def ingest_provider_batch(provider, request):
 
     metadata = provider.metadata
     metadata.validate(request.instrument, request.timeframe)
+    approval = load_approval(approval_path)
+    validate_approval(
+        approval,
+        request.instrument,
+        request.timeframe,
+        provider_id=metadata.provider_id,
+    )
 
     try:
         observations = provider.fetch_candles(request)
@@ -77,6 +85,21 @@ def ingest_provider_batch(provider, request):
         request.instrument,
         request.timeframe,
     )
+    reject_future_candles(candles)
+    request_start = datetime.fromisoformat(
+        request.start.replace("Z", "+00:00")
+    ).astimezone(timezone.utc)
+    request_end = datetime.fromisoformat(
+        request.end.replace("Z", "+00:00")
+    ).astimezone(timezone.utc)
+    for candle in candles:
+        candle_time = datetime.fromisoformat(
+            candle["timestamp"].replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+        if not request_start <= candle_time <= request_end:
+            raise ProviderResponseError(
+                "provider returned a candle outside the requested range"
+            )
 
     result = historical_store.ingest_candles(
         instrument=request.instrument,

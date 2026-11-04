@@ -46,13 +46,14 @@ def validate_approval(
     instrument,
     timeframe,
     today=None,
+    provider_id=PROVIDER_ID,
 ):
     if not isinstance(record, dict):
         raise ProviderNotApproved(
             "written provider approval is required"
         )
 
-    if record.get("provider_id") != PROVIDER_ID:
+    if record.get("provider_id") != provider_id:
         raise ProviderNotApproved("approval provider does not match")
 
     if record.get("status") != "APPROVED":

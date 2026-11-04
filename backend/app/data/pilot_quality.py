@@ -8,11 +8,18 @@ from app.data.pilot_store import connect_pilot
 
 
 def _utc(value):
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timestamp must be timezone-aware")
+
     return parsed.astimezone(timezone.utc)
 
 
-def generate_pilot_quality_report(database_path, plan_id):
+def generate_pilot_quality_report(database_path, plan_id, *, as_of_utc=None):
     connection = connect_pilot(database_path)
 
     try:
@@ -70,8 +77,12 @@ def generate_pilot_quality_report(database_path, plan_id):
 
         invalid_ohlc = 0
         invalid_volume = 0
+        unknown_volume_rows = 0
 
         for row in rows:
+            if row['volume_available'] not in (0, 1):
+                unknown_volume_rows += 1
+
             if (
                 row["high"] < max(row["open"], row["close"], row["low"])
                 or row["low"] > min(row["open"], row["close"], row["high"])
@@ -111,8 +122,24 @@ def generate_pilot_quality_report(database_path, plan_id):
         total_slots = int(plan["bar_slots"])
         observed_rows = len(rows)
 
+        report_time = (
+            _utc(as_of_utc)
+            if as_of_utc is not None
+            else datetime.now(timezone.utc)
+        )
+        candle_times = [_utc(row["timestamp"]) for row in rows]
+        newest_candle = max(candle_times) if candle_times else None
+        newest_age_seconds = (
+            (report_time - newest_candle).total_seconds()
+            if newest_candle is not None else None
+        )
+        future_observation_rows = sum(
+            timestamp > report_time for timestamp in candle_times
+        )
+
         return {
             "plan_id": plan_id,
+            "report_generated_at_utc": report_time.isoformat(),
             "instrument": plan["instrument"],
             "timeframe": plan["timeframe"],
             "status": (
@@ -144,6 +171,12 @@ def generate_pilot_quality_report(database_path, plan_id):
                 ),
                 "unverified_slots_are_not_confirmed_missing_candles": True,
                 "duplicate_timestamp_rows": duplicate_timestamp_rows,
+                "newest_candle_timestamp_utc": (
+                    newest_candle.isoformat() if newest_candle else None
+                ),
+                "newest_candle_age_seconds": newest_age_seconds,
+                "future_observation_rows": future_observation_rows,
+                "volume_metadata_unknown_rows": unknown_volume_rows,
                 "ohlc_invalid_rows": invalid_ohlc,
                 "volume_invalid_rows": invalid_volume,
                 "volume_available_rows": sum(
@@ -151,6 +184,25 @@ def generate_pilot_quality_report(database_path, plan_id):
                 ),
                 "volume_unavailable_rows": sum(
                     row["volume_available"] == 0 for row in rows
+                ),
+            },
+            "freshness_assessment": {
+                "classification": "AGE_ONLY_NOT_CLASSIFIED",
+                "age_basis": "CANDLE_OPEN_TIMESTAMP",
+                "session_calendar_verified": False,
+                "future_observation_rows": future_observation_rows,
+                "reason": (
+                    "No approved instrument/timeframe session calendar "
+                    "or candle-close convention is available."
+                ),
+            },
+            "quality_controls": {
+                "market_data_verified": False,
+                "signal_eligible": False,
+                "automatic_stale_rejection": False,
+                "reason": (
+                    "Independent source, licensing, session and freshness "
+                    "verification are still required."
                 ),
             },
             "provenance": {
