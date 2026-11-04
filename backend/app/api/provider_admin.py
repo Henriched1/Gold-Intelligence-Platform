@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.data import provider_onboarding as store
+from app.data.provider_connection import run_provider_connection_preflight
 
 router = APIRouter(prefix="/v1/admin", tags=["provider-admin"])
 
@@ -151,3 +152,16 @@ def provider_connection_history(
         "tests": store.list_connection_tests(provider_id, limit=limit),
         "note": "History only. This endpoint does not perform a connection test.",
     }
+
+@router.post(
+    "/providers/{provider_id}/connection-test",
+    dependencies=[Depends(require_admin)],
+)
+def run_provider_preflight(provider_id: str):
+    try:
+        return run_provider_connection_preflight(provider_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=404,
+            detail="Provider not found.",
+        ) from None

@@ -158,3 +158,32 @@ def test_registration_rejects_unexpected_fields(client):
         "/v1/admin/providers", headers=auth(), json=payload
     )
     assert response.status_code == 422
+
+
+def test_connection_preflight_endpoint_requires_admin_auth(client):
+    response = client.post(
+        "/v1/admin/providers/sample_feed/connection-test"
+    )
+    assert response.status_code == 401
+
+
+def test_connection_preflight_endpoint_records_not_run(client, monkeypatch):
+    response = client.post(
+        "/v1/admin/providers",
+        headers=auth(),
+        json=provider_payload(),
+    )
+    assert response.status_code == 201
+    monkeypatch.delenv("SAMPLE_FEED_API_KEY", raising=False)
+
+    result = client.post(
+        "/v1/admin/providers/sample_feed/connection-test",
+        headers=auth(),
+    )
+    assert result.status_code == 200
+    payload = result.json()
+    assert payload["connection_test"]["outcome"] == "NOT_RUN"
+    assert payload["connection_test"]["diagnostic_code"] == "CREDENTIAL_MISSING"
+    assert payload["connection_verified"] is False
+    assert payload["network_request_performed"] is False
+    assert payload["signal_eligible"] is False
