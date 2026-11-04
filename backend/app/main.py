@@ -8,11 +8,13 @@ from app.api.global_intelligence import router as global_intelligence_router
 from app.api.macro_intelligence import router as macro_intelligence_router
 from app.api.data_sources import router as data_sources_router
 from app.api.cross_asset_intelligence import router as cross_asset_router
+from app.api.provider_admin import router as provider_admin_router
 from pydantic import BaseModel, Field
 
 from app.data.historical_store import initialise_historical_store
 from app.data.macro_calendar_store import initialise_macro_store
 from app.data.quality_report import generate_data_quality_report
+from app.data.provider_onboarding import initialise_provider_onboarding_store
 
 from app.core.database import (
     initialise_database,
@@ -32,6 +34,7 @@ async def lifespan(app: FastAPI):
     initialise_database()
     initialise_historical_store()
     initialise_macro_store()
+    initialise_provider_onboarding_store()
     yield
 
 
@@ -46,6 +49,7 @@ app.include_router(global_intelligence_router)
 app.include_router(macro_intelligence_router)
 app.include_router(data_sources_router)
 app.include_router(cross_asset_router)
+app.include_router(provider_admin_router)
 
 
 class Candle(BaseModel):
