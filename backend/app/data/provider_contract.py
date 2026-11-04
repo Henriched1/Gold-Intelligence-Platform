@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 
-SUPPORTED_INSTRUMENTS = frozenset({"XAUUSD"})
+from app.core.universe import INSTRUMENTS
+
+SUPPORTED_INSTRUMENTS = frozenset(
+    item.symbol for item in INSTRUMENTS if item.enabled
+)
 SUPPORTED_TIMEFRAMES = frozenset({"D1", "H4", "H1", "M15"})
 PRICE_COMPONENTS = frozenset({"BID", "ASK", "MID", "UNKNOWN"})
 LICENSING_STATES = frozenset({

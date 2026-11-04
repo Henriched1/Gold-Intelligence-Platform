@@ -9,6 +9,8 @@ from app.data.provider_contract import (
     ProviderError,
     ProviderNotApproved,
     ProviderResponseError,
+    SUPPORTED_INSTRUMENTS,
+    SUPPORTED_TIMEFRAMES,
 )
 from app.data.provider_normalizer import normalise_batch
 
@@ -17,10 +19,10 @@ def _validate_request(request):
     if not isinstance(request, ProviderRequest):
         raise ValueError("request must be a ProviderRequest")
 
-    if request.instrument not in {"XAUUSD"}:
+    if request.instrument not in SUPPORTED_INSTRUMENTS:
         raise ValueError("unsupported canonical instrument")
 
-    if request.timeframe not in {"D1", "H4", "H1", "M15"}:
+    if request.timeframe not in SUPPORTED_TIMEFRAMES:
         raise ValueError("unsupported canonical timeframe")
 
     try:

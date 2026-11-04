@@ -6,6 +6,8 @@ from fastapi import FastAPI, HTTPException
 
 from app.api.global_intelligence import router as global_intelligence_router
 from app.api.macro_intelligence import router as macro_intelligence_router
+from app.api.data_sources import router as data_sources_router
+from app.api.cross_asset_intelligence import router as cross_asset_router
 from pydantic import BaseModel, Field
 
 from app.data.historical_store import initialise_historical_store
@@ -42,6 +44,8 @@ app = FastAPI(
 
 app.include_router(global_intelligence_router)
 app.include_router(macro_intelligence_router)
+app.include_router(data_sources_router)
+app.include_router(cross_asset_router)
 
 
 class Candle(BaseModel):

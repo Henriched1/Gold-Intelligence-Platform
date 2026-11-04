@@ -9,10 +9,11 @@ import json
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from app.data.provider_contract import (
-    SUPPORTED_INSTRUMENTS,
-    SUPPORTED_TIMEFRAMES,
-)
+from app.data.provider_contract import SUPPORTED_TIMEFRAMES
+
+# Preserve the acquisition planner's original approved scope.
+# Global instrument support does not grant historical acquisition permission.
+ACQUISITION_SUPPORTED_INSTRUMENTS = frozenset({"XAUUSD"})
 
 MAX_REQUEST_ROWS = 5000
 MAX_PLAN_CHUNKS = 1000
@@ -74,7 +75,7 @@ def build_acquisition_plan(
 
     instrument = str(instrument).upper()
 
-    if instrument not in SUPPORTED_INSTRUMENTS:
+    if instrument not in ACQUISITION_SUPPORTED_INSTRUMENTS:
         raise ValueError("unsupported instrument")
 
     if timeframe not in SUPPORTED_TIMEFRAMES:

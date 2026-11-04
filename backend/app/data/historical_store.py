@@ -8,8 +8,10 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parents[3] / "data" / "oracle_fx.db"
 
-SUPPORTED_INSTRUMENTS = {"XAUUSD"}
-SUPPORTED_TIMEFRAMES = {"D1", "H4", "H1", "M15"}
+from app.data.provider_contract import (
+    SUPPORTED_INSTRUMENTS,
+    SUPPORTED_TIMEFRAMES,
+)
 
 REQUIRED_FIELDS = ("timestamp", "open", "high", "low", "close")
 
