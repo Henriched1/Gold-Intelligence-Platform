@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
+
+from app.api.global_intelligence import router as global_intelligence_router
 from pydantic import BaseModel, Field
 
 from app.data.historical_store import initialise_historical_store
@@ -34,6 +36,8 @@ app = FastAPI(
     version="0.3.0",
     lifespan=lifespan,
 )
+
+app.include_router(global_intelligence_router)
 
 
 class Candle(BaseModel):
