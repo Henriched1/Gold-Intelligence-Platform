@@ -5,9 +5,11 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 
 from app.api.global_intelligence import router as global_intelligence_router
+from app.api.macro_intelligence import router as macro_intelligence_router
 from pydantic import BaseModel, Field
 
 from app.data.historical_store import initialise_historical_store
+from app.data.macro_calendar_store import initialise_macro_store
 from app.data.quality_report import generate_data_quality_report
 
 from app.core.database import (
@@ -27,6 +29,7 @@ from app.engines.event_sequence import analyse_event_sequence
 async def lifespan(app: FastAPI):
     initialise_database()
     initialise_historical_store()
+    initialise_macro_store()
     yield
 
 
@@ -38,6 +41,7 @@ app = FastAPI(
 )
 
 app.include_router(global_intelligence_router)
+app.include_router(macro_intelligence_router)
 
 
 class Candle(BaseModel):

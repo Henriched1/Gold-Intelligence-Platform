@@ -1,5 +1,6 @@
 import sqlite3
 import json
+from contextlib import closing
 from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parents[3] / "data" / "oracle_fx.db"
@@ -13,7 +14,7 @@ def get_connection():
 
 
 def initialise_database():
-    with get_connection() as connection:
+    with closing(get_connection()) as connection:
         connection.execute("""
             CREATE TABLE IF NOT EXISTS forecasts (
                 id TEXT PRIMARY KEY,
@@ -45,7 +46,7 @@ def initialise_database():
 
 
 def save_forecast(record):
-    with get_connection() as connection:
+    with closing(get_connection()) as connection:
         connection.execute("""
             INSERT INTO forecasts
             (id, instrument, created_at, horizon,
@@ -64,7 +65,7 @@ def save_forecast(record):
 
 
 def get_forecasts(limit=50):
-    with get_connection() as connection:
+    with closing(get_connection()) as connection:
         rows = connection.execute(
             "SELECT * FROM forecasts ORDER BY created_at DESC LIMIT ?",
             (limit,)
