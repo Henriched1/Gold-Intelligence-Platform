@@ -23,6 +23,42 @@ def prepared_store(tmp_path, monkeypatch):
     registry.unregister_provider_factory("sample_feed")
 
 
+def make_adapter(
+    provider_id="sample_feed",
+    instruments=None,
+    historical=None,
+    live=None,
+    licensing="APPROVED",
+):
+    class Metadata:
+        pass
+
+    metadata = Metadata()
+    metadata.provider_id = provider_id
+    metadata.instrument_mapping = instruments if instruments is not None else {
+        "XAUUSD": "XAU/USD",
+        "EURUSD": "EUR/USD",
+    }
+    metadata.supported_timeframes = historical if historical is not None else {"D1", "H4"}
+    metadata.live_supported_timeframes = live if live is not None else {"H4"}
+    metadata.licensing_status = licensing
+
+    class Adapter:
+        credentials_configured = True
+
+    adapter = Adapter()
+    adapter.metadata = metadata
+    return adapter
+
+
+def install_adapter(monkeypatch, adapter):
+    monkeypatch.setattr(
+        registry,
+        "get_registered_provider_factories",
+        lambda: {"sample_feed": lambda: adapter},
+    )
+
+
 def test_missing_credential_blocks(prepared_store):
     result = run_provider_connection_preflight("sample_feed", {})
     assert result["preflight_status"] == "BLOCKED"
@@ -55,16 +91,9 @@ def test_adapter_initialization_error_is_sanitized(prepared_store, monkeypatch):
 
 
 def test_unapproved_license_blocks(prepared_store, monkeypatch):
-    class Metadata:
-        licensing_status = "NOT_APPROVED"
-
-    class Adapter:
-        credentials_configured = True
-        metadata = Metadata()
-
-    monkeypatch.setattr(
-        registry, "get_registered_provider_factories",
-        lambda: {"sample_feed": Adapter},
+    install_adapter(
+        monkeypatch,
+        make_adapter(licensing="NOT_APPROVED"),
     )
     result = run_provider_connection_preflight(
         "sample_feed", {"SAMPLE_FEED_API_KEY": "present"}
@@ -73,28 +102,66 @@ def test_unapproved_license_blocks(prepared_store, monkeypatch):
     assert result["connection_verified"] is False
 
 
-def test_local_ready_state_does_not_claim_connection(prepared_store, monkeypatch):
-    class Metadata:
-        licensing_status = "APPROVED"
-
-    class Adapter:
-        credentials_configured = True
-        metadata = Metadata()
-
-    monkeypatch.setattr(
-        registry, "get_registered_provider_factories",
-        lambda: {"sample_feed": Adapter},
-    )
+def test_valid_historical_and_live_scope_passes_local_checks(
+    prepared_store, monkeypatch
+):
+    install_adapter(monkeypatch, make_adapter())
     result = run_provider_connection_preflight(
         "sample_feed", {"SAMPLE_FEED_API_KEY": "present"}
     )
     assert result["preflight_status"] == "READY_FOR_EXPLICIT_NETWORK_TEST"
+    assert result["adapter_scope_validated"] is True
     assert result["connection_test"]["outcome"] == "NOT_RUN"
     assert result["connection_test"]["diagnostic_code"] == "NETWORK_TEST_NOT_ENABLED"
     assert result["connection_verified"] is False
     assert result["network_request_performed"] is False
+    assert result["network_test_authorized"] is False
     assert result["licensing_approved"] is False
     assert result["signal_eligible"] is False
+
+
+def test_adapter_provider_identity_must_match(prepared_store, monkeypatch):
+    install_adapter(
+        monkeypatch,
+        make_adapter(provider_id="different_provider"),
+    )
+    result = run_provider_connection_preflight(
+        "sample_feed", {"SAMPLE_FEED_API_KEY": "present"}
+    )
+    assert result["connection_test"]["diagnostic_code"] == "ADAPTER_PROVIDER_MISMATCH"
+
+
+def test_every_declared_instrument_must_be_mapped(prepared_store, monkeypatch):
+    install_adapter(
+        monkeypatch,
+        make_adapter(instruments={"XAUUSD": "XAU/USD"}),
+    )
+    result = run_provider_connection_preflight(
+        "sample_feed", {"SAMPLE_FEED_API_KEY": "present"}
+    )
+    assert result["connection_test"]["diagnostic_code"] == "HISTORICAL_SCOPE_UNSUPPORTED"
+
+
+def test_every_historical_timeframe_must_be_supported(prepared_store, monkeypatch):
+    install_adapter(
+        monkeypatch,
+        make_adapter(historical={"D1"}),
+    )
+    result = run_provider_connection_preflight(
+        "sample_feed", {"SAMPLE_FEED_API_KEY": "present"}
+    )
+    assert result["connection_test"]["diagnostic_code"] == "HISTORICAL_SCOPE_UNSUPPORTED"
+
+
+def test_live_scope_is_checked_separately(prepared_store, monkeypatch):
+    install_adapter(
+        monkeypatch,
+        make_adapter(live=set()),
+    )
+    result = run_provider_connection_preflight(
+        "sample_feed", {"SAMPLE_FEED_API_KEY": "present"}
+    )
+    assert result["connection_test"]["diagnostic_code"] == "LIVE_SCOPE_UNSUPPORTED"
 
 
 def test_disabled_provider_blocks(prepared_store, monkeypatch):
