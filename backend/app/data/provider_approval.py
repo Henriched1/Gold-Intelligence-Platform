@@ -139,3 +139,34 @@ def validate_approval(
             )
 
     return record
+
+
+LIVE_REQUIRED_RIGHTS = (
+    "live_market_data_access",
+    "live_data_storage",
+)
+
+
+def validate_live_approval(
+    record,
+    instrument,
+    timeframe,
+    today=None,
+    provider_id=PROVIDER_ID,
+):
+    """Require historical rights plus explicit live-feed permissions."""
+    approved = validate_approval(
+        record,
+        instrument,
+        timeframe,
+        today=today,
+        provider_id=provider_id,
+    )
+
+    for right in LIVE_REQUIRED_RIGHTS:
+        if approved.get(right) is not True:
+            raise ProviderNotApproved(
+                f"required live-data permission is missing: {right}"
+            )
+
+    return approved

@@ -48,6 +48,7 @@ class ProviderMetadata:
     price_component: str
     volume_semantics: str
     licensing_status: str = "NOT_APPROVED"
+    live_supported_timeframes: frozenset[str] = frozenset()
 
     def validate(self, instrument: str, timeframe: str) -> None:
         required = {
@@ -87,6 +88,14 @@ class ProviderMetadata:
 
         if not isinstance(mapped, str) or not mapped.strip():
             raise ValueError("provider instrument mapping is missing")
+
+    def validate_live(self, instrument: str, timeframe: str) -> None:
+        """Validate historical scope and separate live-feed permission."""
+        self.validate(instrument, timeframe)
+        if timeframe not in self.live_supported_timeframes:
+            raise ProviderNotApproved(
+                "provider live-data permission is not approved"
+            )
 
 
 @dataclass(frozen=True)

@@ -13,6 +13,7 @@ from app.data.provider_approval import (
     PROVIDER_ID,
     load_approval,
     validate_approval,
+    validate_live_approval,
 )
 from app.data.provider_contract import (
     ProviderMetadata,
@@ -77,9 +78,18 @@ class TwelveDataProvider:
         self.timeout = float(timeout)
         self.metadata = self._build_metadata()
 
+    @property
+    def credentials_configured(self):
+        """Expose credential presence, never the credential value."""
+        return (
+            isinstance(self._api_key, str)
+            and bool(self._api_key.strip())
+        )
+
     def _build_metadata(self):
         record = load_approval(self.approval_path)
         approved_timeframes = set()
+        live_approved_timeframes = set()
 
         if record is not None:
             for timeframe in TIMEFRAME_INTERVALS:
@@ -93,6 +103,15 @@ class TwelveDataProvider:
                     continue
 
                 approved_timeframes.add(timeframe)
+                try:
+                    validate_live_approval(
+                        record,
+                        "XAUUSD",
+                        timeframe,
+                    )
+                except ProviderNotApproved:
+                    continue
+                live_approved_timeframes.add(timeframe)
 
         is_approved = bool(approved_timeframes)
 
@@ -111,6 +130,9 @@ class TwelveDataProvider:
             ),
             licensing_status=(
                 "APPROVED" if is_approved else "NOT_APPROVED"
+            ),
+            live_supported_timeframes=frozenset(
+                live_approved_timeframes
             ),
         )
 
