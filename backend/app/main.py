@@ -15,6 +15,7 @@ from app.data.historical_store import initialise_historical_store
 from app.data.macro_calendar_store import initialise_macro_store
 from app.data.quality_report import generate_data_quality_report
 from app.data.provider_onboarding import initialise_provider_onboarding_store
+from app.data.provider_pipeline_store import initialise_pipeline_store
 
 from app.core.database import (
     initialise_database,
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
     initialise_historical_store()
     initialise_macro_store()
     initialise_provider_onboarding_store()
+    initialise_pipeline_store()
     yield
 
 
