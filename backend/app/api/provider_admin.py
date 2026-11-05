@@ -165,3 +165,56 @@ def run_provider_preflight(provider_id: str):
             status_code=404,
             detail="Provider not found.",
         ) from None
+
+# Phase 16 Step 3: authenticated, read-only ingestion-job observability.
+from app.data import provider_pipeline_store as pipeline_store
+
+
+@router.get(
+    "/ingestion-jobs",
+    dependencies=[Depends(require_admin)],
+)
+def ingestion_jobs(
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    return {
+        "jobs": pipeline_store.list_jobs(limit=limit),
+        "execution_enabled": False,
+        "note": "Read-only job history. This endpoint does not execute ingestion.",
+    }
+
+
+@router.get(
+    "/ingestion-jobs/{job_id}",
+    dependencies=[Depends(require_admin)],
+)
+def ingestion_job(job_id: str):
+    job = pipeline_store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Ingestion job not found.")
+
+    return {
+        "job": job,
+        "execution_enabled": False,
+    }
+
+
+@router.get(
+    "/ingestion-jobs/{job_id}/events",
+    dependencies=[Depends(require_admin)],
+)
+def ingestion_job_events(job_id: str):
+    try:
+        events = pipeline_store.list_job_events(job_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=404,
+            detail="Ingestion job not found.",
+        ) from None
+
+    return {
+        "job_id": job_id,
+        "events": events,
+        "history_append_only": True,
+        "execution_enabled": False,
+    }
