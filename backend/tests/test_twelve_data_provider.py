@@ -349,5 +349,68 @@ class TwelveDataProviderTests(unittest.TestCase):
                 provider.fetch_candles(self.request())
 
 
+    def test_xagusd_explicit_approval_and_mapping(self):
+        record = approved_record()
+        record["permitted_instruments"] = ["XAGUSD"]
+        record["instrument_mapping"] = {"XAGUSD": "XAG/USD"}
+        self.write_approval(record)
+
+        provider = self.provider()
+        request = ProviderRequest(
+            instrument="XAGUSD",
+            timeframe="M15",
+            start="2026-11-02T00:00:00Z",
+            end="2026-11-03T00:00:00Z",
+        )
+        payload = {
+            "meta": {"symbol": "XAG/USD"},
+            "values": [{
+                "datetime": "2026-11-02 00:15:00",
+                "open": "50.10",
+                "high": "50.50",
+                "low": "50.00",
+                "close": "50.30",
+                "volume": "10",
+            }],
+        }
+
+        with patch(
+            "app.data.providers.twelve_data.urlopen",
+            return_value=FakeResponse(payload),
+        ) as mocked_urlopen:
+            candles = provider.fetch_candles(request)
+
+        self.assertEqual(len(candles), 1)
+        self.assertEqual(provider.metadata.instrument_mapping["XAGUSD"], "XAG/USD")
+
+        url = mocked_urlopen.call_args.args[0].full_url
+        params = parse_qs(urlparse(url).query)
+        self.assertEqual(params["symbol"], ["XAG/USD"])
+
+    def test_xagusd_without_explicit_mapping_is_blocked(self):
+        record = approved_record()
+        record["permitted_instruments"] = ["XAGUSD"]
+        self.write_approval(record)
+
+        provider = self.provider()
+        request = ProviderRequest(
+            instrument="XAGUSD",
+            timeframe="M15",
+            start="2026-11-02T00:00:00Z",
+            end="2026-11-03T00:00:00Z",
+        )
+
+        self.assertNotIn("XAGUSD", provider.metadata.instrument_mapping)
+
+        with patch(
+            "app.data.providers.twelve_data.urlopen"
+        ) as mocked_urlopen:
+            with self.assertRaises(ValueError):
+                provider.fetch_candles(request)
+
+        mocked_urlopen.assert_not_called()
+
+
+
 if __name__ == "__main__":
     unittest.main()

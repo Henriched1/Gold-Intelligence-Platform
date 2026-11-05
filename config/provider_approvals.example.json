@@ -5,6 +5,7 @@
   "approved_at": "",
   "expires_at": "",
   "permitted_instruments": [],
+  "instrument_mapping": {},
   "permitted_timeframes": [],
   "exchange_timezone": "",
   "retention_days": 0,

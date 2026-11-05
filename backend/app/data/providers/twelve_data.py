@@ -22,6 +22,7 @@ from app.data.provider_contract import (
     ProviderRequest,
     ProviderResponseError,
     ProviderUnavailable,
+    SUPPORTED_INSTRUMENTS,
 )
 
 
@@ -90,35 +91,70 @@ class TwelveDataProvider:
         record = load_approval(self.approval_path)
         approved_timeframes = set()
         live_approved_timeframes = set()
+        instrument_mapping = {}
 
         if record is not None:
-            for timeframe in TIMEFRAME_INTERVALS:
-                try:
-                    validate_approval(
-                        record,
-                        "XAUUSD",
-                        timeframe,
-                    )
-                except ProviderNotApproved:
+            permitted = record.get("permitted_instruments", [])
+            configured_mappings = record.get("instrument_mapping", {})
+
+            if not isinstance(permitted, list):
+                permitted = []
+
+            if not isinstance(configured_mappings, dict):
+                configured_mappings = {}
+
+            for instrument in permitted:
+                if instrument not in SUPPORTED_INSTRUMENTS:
                     continue
 
-                approved_timeframes.add(timeframe)
-                try:
-                    validate_live_approval(
-                        record,
-                        "XAUUSD",
-                        timeframe,
-                    )
-                except ProviderNotApproved:
-                    continue
-                live_approved_timeframes.add(timeframe)
+                mapped_symbol = configured_mappings.get(instrument)
 
-        is_approved = bool(approved_timeframes)
+                # Preserve the existing gold configuration.
+                if instrument == "XAUUSD" and mapped_symbol is None:
+                    mapped_symbol = "XAU/USD"
+
+                # Never guess provider symbols for other instruments.
+                if (
+                    not isinstance(mapped_symbol, str)
+                    or not mapped_symbol.strip()
+                ):
+                    continue
+
+                instrument_timeframes = set()
+
+                for timeframe in TIMEFRAME_INTERVALS:
+                    try:
+                        validate_approval(
+                            record,
+                            instrument,
+                            timeframe,
+                        )
+                    except ProviderNotApproved:
+                        continue
+
+                    instrument_timeframes.add(timeframe)
+                    approved_timeframes.add(timeframe)
+
+                    try:
+                        validate_live_approval(
+                            record,
+                            instrument,
+                            timeframe,
+                        )
+                    except ProviderNotApproved:
+                        continue
+
+                    live_approved_timeframes.add(timeframe)
+
+                if instrument_timeframes:
+                    instrument_mapping[instrument] = mapped_symbol.strip()
+
+        is_approved = bool(instrument_mapping)
 
         return ProviderMetadata(
             provider_id=PROVIDER_ID,
             provider_version=API_VERSION,
-            instrument_mapping={"XAUUSD": "XAU/USD"},
+            instrument_mapping=instrument_mapping,
             supported_timeframes=frozenset(approved_timeframes),
             session_convention=(
                 "Intraday timestamps requested in UTC; daily timestamps "
@@ -203,7 +239,7 @@ class TwelveDataProvider:
             raise ValueError("request must be a ProviderRequest")
 
         if (
-            request.instrument != "XAUUSD"
+            request.instrument not in SUPPORTED_INSTRUMENTS
             or request.timeframe not in TIMEFRAME_INTERVALS
         ):
             raise ValueError("unsupported instrument or timeframe")
@@ -216,6 +252,10 @@ class TwelveDataProvider:
 
         # Licensing approval is checked before any outbound request.
         record = self._approved_record(request)
+
+        # Require an explicit provider mapping after licensing approval.
+        if request.instrument not in self.metadata.instrument_mapping:
+            raise ValueError("provider instrument mapping is missing")
 
         if not self._api_key or not self._api_key.strip():
             raise ProviderUnavailable(
