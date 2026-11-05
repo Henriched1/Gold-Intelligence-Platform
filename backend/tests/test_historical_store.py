@@ -204,5 +204,30 @@ class HistoricalStoreTests(unittest.TestCase):
             connection.close()
 
 
+    def test_latest_retrieval_returns_newest_rows_in_chronological_order(self):
+        self.ingest([candle(1), candle(2), candle(3)])
+        rows = store.get_historical_candles(
+            "XAUUSD", "H1", limit=2, latest=True
+        )
+        self.assertEqual(
+            [row["timestamp"] for row in rows],
+            [
+                "2026-01-02T00:00:00+00:00",
+                "2026-01-03T00:00:00+00:00",
+            ],
+        )
+
+    def test_default_retrieval_still_returns_oldest_rows(self):
+        self.ingest([candle(1), candle(2), candle(3)])
+        rows = store.get_historical_candles("XAUUSD", "H1", limit=2)
+        self.assertEqual(
+            [row["timestamp"] for row in rows],
+            [
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-02T00:00:00+00:00",
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

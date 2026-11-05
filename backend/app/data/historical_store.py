@@ -318,6 +318,7 @@ def get_historical_candles(
     end=None,
     source=None,
     limit=5000,
+    latest=False,
 ):
     instrument = str(instrument).upper()
 
@@ -327,8 +328,10 @@ def get_historical_candles(
     ):
         raise ValueError("unsupported instrument or timeframe")
 
-    if not isinstance(limit, int) or not 1 <= limit <= 100000:
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100000:
         raise ValueError("limit must be between 1 and 100000")
+    if not isinstance(latest, bool):
+        raise ValueError("latest must be boolean")
 
     start_utc = _utc_timestamp(start) if start is not None else None
     end_utc = _utc_timestamp(end) if end is not None else None
@@ -358,10 +361,16 @@ def get_historical_candles(
         rows = connection.execute(
             "SELECT * FROM historical_candles WHERE "
             + " AND ".join(clauses)
-            + " ORDER BY timestamp ASC, source ASC LIMIT ?",
+            + (
+                " ORDER BY timestamp DESC, source DESC LIMIT ?"
+                if latest
+                else " ORDER BY timestamp ASC, source ASC LIMIT ?"
+            ),
             params,
         ).fetchall()
 
+    if latest:
+        rows = list(reversed(rows))
     return [dict(row) for row in rows]
 
 
