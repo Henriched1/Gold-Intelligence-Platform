@@ -10,6 +10,7 @@ from app.api.data_sources import router as data_sources_router
 from app.api.cross_asset_intelligence import router as cross_asset_router
 from app.api.provider_admin import router as provider_admin_router
 from app.api.stored_intelligence import router as stored_intelligence_router
+from app.api.global_coverage import router as global_coverage_router
 from pydantic import BaseModel, Field
 
 from app.data.historical_store import initialise_historical_store
@@ -54,6 +55,7 @@ app.include_router(data_sources_router)
 app.include_router(cross_asset_router)
 app.include_router(provider_admin_router)
 app.include_router(stored_intelligence_router)
+app.include_router(global_coverage_router)
 
 
 class Candle(BaseModel):
