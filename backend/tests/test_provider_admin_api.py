@@ -95,7 +95,7 @@ def test_duplicate_provider_returns_conflict(client):
     assert response.status_code == 409
 
 
-def test_admin_can_disable_provider_but_not_approve_it(client):
+def test_admin_can_activate_provider_but_not_approve_licensing(client):
     client.post(
         "/v1/admin/providers", headers=auth(), json=provider_payload()
     )
@@ -106,6 +106,17 @@ def test_admin_can_disable_provider_but_not_approve_it(client):
         json={"lifecycle_state": "APPROVED"},
     )
     assert rejected.status_code == 422
+
+    activated = client.patch(
+        "/v1/admin/providers/sample_feed/lifecycle",
+        headers=auth(),
+        json={"lifecycle_state": "ACTIVE"},
+    )
+    assert activated.status_code == 200
+    provider = activated.json()["provider"]
+    assert provider["lifecycle_state"] == "ACTIVE"
+    assert provider["licensing_approved"] is False
+    assert provider["signal_eligible"] is False
 
     disabled = client.patch(
         "/v1/admin/providers/sample_feed/lifecycle",

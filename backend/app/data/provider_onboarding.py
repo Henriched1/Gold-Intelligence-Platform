@@ -21,7 +21,7 @@ ID_RE = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
 ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")
 CODE_RE = re.compile(r"^[A-Z0-9_]{1,64}$")
 
-LIFECYCLE_STATES = {"PENDING_REVIEW", "DISABLED"}
+LIFECYCLE_STATES = {"PENDING_REVIEW", "ACTIVE", "DISABLED"}
 TEST_OUTCOMES = {
     "SUCCEEDED", "FAILED", "AUTH_FAILED",
     "RATE_LIMITED", "TIMEOUT", "NOT_RUN",
@@ -68,16 +68,69 @@ def _scope(values, allowed, field):
     return result
 
 
+def _migrate_provider_lifecycle(db):
+    """Expand the provider lifecycle constraint without activating old rows."""
+    row = db.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='provider_onboarding'"
+    ).fetchone()
+
+    if row is None or "'ACTIVE'" in (row["sql"] or "").upper():
+        return
+
+    db.execute("""
+        CREATE TABLE provider_onboarding_new (
+            provider_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            adapter_key TEXT NOT NULL,
+            lifecycle_state TEXT NOT NULL
+                CHECK(lifecycle_state IN (
+                    'PENDING_REVIEW','ACTIVE','DISABLED'
+                )),
+            credential_env_var TEXT NOT NULL,
+            supported_instruments_json TEXT NOT NULL,
+            historical_timeframes_json TEXT NOT NULL,
+            live_timeframes_json TEXT NOT NULL,
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    db.execute("""
+        INSERT INTO provider_onboarding_new (
+            provider_id, display_name, adapter_key, lifecycle_state,
+            credential_env_var, supported_instruments_json,
+            historical_timeframes_json, live_timeframes_json,
+            notes, created_at, updated_at
+        )
+        SELECT
+            provider_id, display_name, adapter_key, lifecycle_state,
+            credential_env_var, supported_instruments_json,
+            historical_timeframes_json, live_timeframes_json,
+            notes, created_at, updated_at
+        FROM provider_onboarding
+    """)
+
+    db.execute("DROP TABLE provider_onboarding")
+    db.execute(
+        "ALTER TABLE provider_onboarding_new "
+        "RENAME TO provider_onboarding"
+    )
+
+
 def initialise_provider_onboarding_store():
     """Create additive tables in the existing ORACLE FX database."""
     with _connect() as db:
+        db.execute("PRAGMA foreign_keys=OFF")
+        _migrate_provider_lifecycle(db)
         db.execute("""
             CREATE TABLE IF NOT EXISTS provider_onboarding (
                 provider_id TEXT PRIMARY KEY,
                 display_name TEXT NOT NULL,
                 adapter_key TEXT NOT NULL,
                 lifecycle_state TEXT NOT NULL
-                    CHECK(lifecycle_state IN ('PENDING_REVIEW','DISABLED')),
+                    CHECK(lifecycle_state IN ('PENDING_REVIEW','ACTIVE','DISABLED')),
                 credential_env_var TEXT NOT NULL,
                 supported_instruments_json TEXT NOT NULL,
                 historical_timeframes_json TEXT NOT NULL,
@@ -222,7 +275,7 @@ def list_providers(include_disabled=True):
 def set_provider_lifecycle(provider_id, lifecycle_state):
     """Lifecycle controls cannot approve licensing."""
     if lifecycle_state not in LIFECYCLE_STATES:
-        raise ValueError("only PENDING_REVIEW or DISABLED is allowed")
+        raise ValueError("lifecycle_state must be PENDING_REVIEW, ACTIVE, or DISABLED")
     with _connect() as db:
         cursor = db.execute("""
             UPDATE provider_onboarding

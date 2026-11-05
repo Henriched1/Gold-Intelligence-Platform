@@ -5,7 +5,7 @@ import os
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.data import provider_onboarding as store
@@ -82,7 +82,7 @@ class ProviderRegistration(BaseModel):
 
 class LifecycleUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    lifecycle_state: Literal["PENDING_REVIEW", "DISABLED"]
+    lifecycle_state: Literal["PENDING_REVIEW", "ACTIVE", "DISABLED"]
 
 
 @router.get("/providers", dependencies=[Depends(require_admin)])
@@ -217,4 +217,67 @@ def ingestion_job_events(job_id: str):
         "events": events,
         "history_append_only": True,
         "execution_enabled": False,
+    }
+
+
+# Phase 16 Step 4: authenticated, queue-only historical ingestion submission.
+class HistoricalIngestionSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instrument: str = Field(min_length=1, max_length=20)
+    timeframe: str = Field(min_length=1, max_length=10)
+    start: str = Field(min_length=10, max_length=64)
+    end: str = Field(min_length=10, max_length=64)
+    provider_ids: list[str] = Field(min_length=1, max_length=5)
+
+
+@router.post(
+    "/ingestion-jobs",
+    dependencies=[Depends(require_admin)],
+)
+def submit_ingestion_job(
+    request: HistoricalIngestionSubmission,
+    response: Response,
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+):
+    import re
+
+    from app.data.provider_job_submission import (
+        ProviderAdmissionError,
+        submit_historical_job,
+    )
+
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,127}", idempotency_key):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "INVALID_IDEMPOTENCY_KEY",
+                "message": "Idempotency-Key must be 8–128 permitted characters.",
+            },
+        )
+
+    try:
+        result = submit_historical_job(
+            idempotency_key=idempotency_key,
+            instrument=request.instrument,
+            timeframe=request.timeframe,
+            start=request.start,
+            end=request.end,
+            provider_ids=request.provider_ids,
+        )
+    except ProviderAdmissionError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=error.as_detail(),
+        ) from None
+
+    response.status_code = 202 if result["created"] else 200
+    return {
+        **result,
+        "execution_enabled": False,
+        "provider_network_requests_enabled": False,
+        "note": (
+            "The job is queued for a separately authorized execution process. "
+            "This endpoint does not download market data or start a worker."
+        ),
     }

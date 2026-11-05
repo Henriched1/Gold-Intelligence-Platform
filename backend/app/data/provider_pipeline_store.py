@@ -72,26 +72,22 @@ def _validate_timestamp(value, field):
     return parsed.astimezone(timezone.utc).isoformat()
 
 
-def _validate_job_input(idempotency_key, providers, request):
+def _fingerprint_for_ids(idempotency_key, provider_ids, request):
     if (
         not isinstance(idempotency_key, str)
         or not IDEMPOTENCY_RE.fullmatch(idempotency_key)
     ):
         raise ValueError("invalid idempotency_key")
 
-    if not isinstance(providers, (list, tuple)) or not providers:
-        raise ValueError("providers must be a non-empty list or tuple")
-    if len(providers) > 5:
+    if not isinstance(provider_ids, (list, tuple)) or not provider_ids:
+        raise ValueError("provider_ids must be a non-empty list or tuple")
+    if len(provider_ids) > 5:
         raise ValueError("provider count exceeds the configured limit")
-
-    provider_ids = []
-    for provider in providers:
-        metadata = getattr(provider, "metadata", None)
-        provider_id = getattr(metadata, "provider_id", None)
-        if not isinstance(provider_id, str) or not provider_id.strip():
-            raise ValueError("every provider must have a valid provider_id")
-        provider_ids.append(provider_id)
-
+    if any(
+        not isinstance(provider_id, str) or not provider_id.strip()
+        for provider_id in provider_ids
+    ):
+        raise ValueError("every provider_id must be non-empty text")
     if len(set(provider_ids)) != len(provider_ids):
         raise ValueError("duplicate provider_id values are not allowed")
 
@@ -112,11 +108,59 @@ def _validate_job_input(idempotency_key, providers, request):
         "timeframe": request.timeframe,
         "start": start,
         "end": end,
-        "provider_ids": provider_ids,
+        "provider_ids": list(provider_ids),
     }
-    fingerprint = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return provider_ids, payload, fingerprint
+    fingerprint = json.dumps(
+        payload, sort_keys=True, separators=(",", ":")
+    )
+    return list(provider_ids), payload, fingerprint
 
+
+def _validate_job_input(idempotency_key, providers, request):
+    if not isinstance(providers, (list, tuple)) or not providers:
+        raise ValueError("providers must be a non-empty list or tuple")
+    if len(providers) > 5:
+        raise ValueError("provider count exceeds the configured limit")
+
+    provider_ids = []
+    for provider in providers:
+        metadata = getattr(provider, "metadata", None)
+        provider_id = getattr(metadata, "provider_id", None)
+        if not isinstance(provider_id, str) or not provider_id.strip():
+            raise ValueError("every provider must have a valid provider_id")
+        provider_ids.append(provider_id)
+
+    return _fingerprint_for_ids(idempotency_key, provider_ids, request)
+
+
+def find_existing_job(idempotency_key, provider_ids, request):
+    """Return an identical existing job or raise on key reuse conflict.
+
+    This read-only check allows safe retries before provider re-admission.
+    New jobs must still pass the complete admission process.
+    """
+    _, _, fingerprint = _fingerprint_for_ids(
+        idempotency_key, provider_ids, request
+    )
+
+    with _connect() as db:
+        existing = db.execute(
+            """
+            SELECT * FROM provider_ingestion_jobs
+            WHERE idempotency_key=?
+            """,
+            (idempotency_key,),
+        ).fetchone()
+
+    if existing is None:
+        return None
+
+    if existing["request_fingerprint"] != fingerprint:
+        raise IdempotencyConflict(
+            "idempotency key was already used for a different request"
+        )
+
+    return _job_dict(existing)
 
 def _append_event(
     db,

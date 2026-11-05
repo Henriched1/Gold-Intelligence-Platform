@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 
 from app.data import provider_onboarding as store
+from app.data import provider_onboarding as onboarding_db_module
 
 
 @pytest.fixture
@@ -181,3 +182,94 @@ def test_invalid_test_latency_rejected(onboarding_db):
         onboarding_db.record_connection_test(
             "sample_feed", "FAILED", False, latency_ms=-1
         )
+
+
+def test_active_lifecycle_does_not_grant_licensing_or_signal_approval(
+    onboarding_db
+):
+    add_provider(onboarding_db)
+
+    item = onboarding_db.set_provider_lifecycle("sample_feed", "ACTIVE")
+
+    assert item["lifecycle_state"] == "ACTIVE"
+    assert item["licensing_approved"] is False
+    assert item["signal_eligible"] is False
+
+
+def test_legacy_lifecycle_migration_preserves_provider_and_test_history(
+    tmp_path, monkeypatch
+):
+    legacy_path = tmp_path / "legacy_oracle_fx.db"
+    monkeypatch.setattr(onboarding_db_module, "DB_PATH", legacy_path)
+
+    with sqlite3.connect(legacy_path) as db:
+        db.execute("""
+            CREATE TABLE provider_onboarding (
+                provider_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                adapter_key TEXT NOT NULL,
+                lifecycle_state TEXT NOT NULL
+                    CHECK(lifecycle_state IN ('PENDING_REVIEW','DISABLED')),
+                credential_env_var TEXT NOT NULL,
+                supported_instruments_json TEXT NOT NULL,
+                historical_timeframes_json TEXT NOT NULL,
+                live_timeframes_json TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        db.execute("""
+            INSERT INTO provider_onboarding VALUES (
+                'legacy_feed', 'Legacy Feed', 'legacy_adapter',
+                'PENDING_REVIEW', 'LEGACY_API_KEY',
+                '["XAUUSD"]', '["H1"]', '[]', '',
+                '2026-01-01T00:00:00+00:00',
+                '2026-01-01T00:00:00+00:00'
+            )
+        """)
+        db.execute("""
+            CREATE TABLE provider_connection_tests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                tested_at TEXT NOT NULL,
+                latency_ms INTEGER,
+                credential_present INTEGER NOT NULL,
+                diagnostic_code TEXT,
+                FOREIGN KEY(provider_id)
+                    REFERENCES provider_onboarding(provider_id)
+            )
+        """)
+        db.execute("""
+            INSERT INTO provider_connection_tests (
+                provider_id, outcome, tested_at, latency_ms,
+                credential_present, diagnostic_code
+            ) VALUES (
+                'legacy_feed', 'SUCCEEDED',
+                '2026-01-02T00:00:00+00:00', 100, 1, 'HTTP_200'
+            )
+        """)
+
+    onboarding_db_module.initialise_provider_onboarding_store()
+
+    provider = onboarding_db_module.get_provider("legacy_feed")
+    assert provider["lifecycle_state"] == "PENDING_REVIEW"
+
+    with sqlite3.connect(legacy_path) as db:
+        history = db.execute(
+            "SELECT provider_id, outcome FROM provider_connection_tests"
+        ).fetchall()
+        foreign_key_errors = db.execute(
+            "PRAGMA foreign_key_check"
+        ).fetchall()
+
+    assert history == [("legacy_feed", "SUCCEEDED")]
+    assert foreign_key_errors == []
+
+    activated = onboarding_db_module.set_provider_lifecycle(
+        "legacy_feed", "ACTIVE"
+    )
+    assert activated["lifecycle_state"] == "ACTIVE"
+    assert activated["licensing_approved"] is False
+    assert activated["signal_eligible"] is False
