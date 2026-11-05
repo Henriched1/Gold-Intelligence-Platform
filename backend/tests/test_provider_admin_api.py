@@ -198,3 +198,113 @@ def test_connection_preflight_endpoint_records_not_run(client, monkeypatch):
     assert payload["connection_verified"] is False
     assert payload["network_request_performed"] is False
     assert payload["signal_eligible"] is False
+
+
+def test_manual_ingestion_execution_endpoint_requires_admin(client):
+    response = client.post(
+        "/v1/admin/ingestion-jobs/example-job/execute"
+    )
+    assert response.status_code == 401
+
+
+def test_manual_ingestion_execution_endpoint_returns_worker_result(
+    client, monkeypatch
+):
+    from app.data import provider_ingestion_worker
+
+    expected = {
+        "job": {"job_id": "example-job", "status": "INGESTED"},
+        "stored": {"inserted": 1, "duplicates": 0, "total_received": 1},
+        "provider_failures": [],
+        "worker_invoked": True,
+        "historical_data_ingested": True,
+        "trade_execution_enabled": False,
+        "live_trading_enabled": False,
+        "orders_submitted": False,
+    }
+    execute = lambda job_id: expected
+    monkeypatch.setattr(
+        provider_ingestion_worker,
+        "execute_ingestion_job",
+        execute,
+    )
+
+    response = client.post(
+        "/v1/admin/ingestion-jobs/example-job/execute",
+        headers=auth(),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["job"]["status"] == "INGESTED"
+    assert payload["historical_data_ingested"] is True
+    assert payload["trade_execution_enabled"] is False
+    assert payload["live_trading_enabled"] is False
+    assert payload["orders_submitted"] is False
+
+
+def test_manual_ingestion_execution_endpoint_maps_missing_job_to_404(
+    client, monkeypatch
+):
+    from app.data import provider_ingestion_worker
+
+    def missing_job(job_id):
+        raise KeyError("not found")
+
+    monkeypatch.setattr(
+        provider_ingestion_worker,
+        "execute_ingestion_job",
+        missing_job,
+    )
+
+    response = client.post(
+        "/v1/admin/ingestion-jobs/missing-job/execute",
+        headers=auth(),
+    )
+    assert response.status_code == 404
+
+
+def test_manual_ingestion_execution_endpoint_rejects_nonqueued_job(
+    client, monkeypatch
+):
+    from app.data import provider_ingestion_worker
+    from app.data.provider_pipeline_store import JobNotRunnable
+
+    def not_queued(job_id):
+        raise JobNotRunnable("already running")
+
+    monkeypatch.setattr(
+        provider_ingestion_worker,
+        "execute_ingestion_job",
+        not_queued,
+    )
+
+    response = client.post(
+        "/v1/admin/ingestion-jobs/running-job/execute",
+        headers=auth(),
+    )
+    assert response.status_code == 409
+
+
+def test_manual_ingestion_execution_endpoint_hides_internal_errors(
+    client, monkeypatch
+):
+    from app.data import provider_ingestion_worker
+
+    def internal_error(job_id):
+        raise RuntimeError("private api_key=DO_NOT_LEAK")
+
+    monkeypatch.setattr(
+        provider_ingestion_worker,
+        "execute_ingestion_job",
+        internal_error,
+    )
+
+    response = client.post(
+        "/v1/admin/ingestion-jobs/example-job/execute",
+        headers=auth(),
+    )
+
+    assert response.status_code == 500
+    assert "DO_NOT_LEAK" not in response.text
+    assert "api_key" not in response.text.lower()

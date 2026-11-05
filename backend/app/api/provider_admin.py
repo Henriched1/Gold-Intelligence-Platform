@@ -281,3 +281,42 @@ def submit_ingestion_job(
             "This endpoint does not download market data or start a worker."
         ),
     }
+
+
+# Phase 16 Step 5: explicitly authenticated, manual historical ingestion.
+@router.post(
+    "/ingestion-jobs/{job_id}/execute",
+    dependencies=[Depends(require_admin)],
+)
+def execute_ingestion_job(job_id: str):
+    from app.data import provider_ingestion_worker
+    from app.data.provider_pipeline_store import JobNotRunnable
+
+    try:
+        result = provider_ingestion_worker.execute_ingestion_job(job_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=404,
+            detail="Ingestion job not found.",
+        ) from None
+    except JobNotRunnable:
+        raise HTTPException(
+            status_code=409,
+            detail="Only a queued ingestion job can be executed.",
+        ) from None
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Historical ingestion could not be completed. Check the job event history.",
+        ) from None
+
+    return {
+        **result,
+        "trade_execution_enabled": False,
+        "live_trading_enabled": False,
+        "orders_submitted": False,
+        "note": (
+            "This endpoint performs historical market-data ingestion only. "
+            "It cannot submit trading orders."
+        ),
+    }
